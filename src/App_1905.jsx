@@ -7,6 +7,7 @@ const SUPABASE_URL = "https://bliocisgoedlybzlfytk.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJsaW9jaXNnb2VkbHliemxmeXRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg3MTQ5MzUsImV4cCI6MjA5NDI5MDkzNX0.u3BZQrm6lWSPPd4gvyZOK9koOispIhYLnjqevtj5fCA";
 const DISPLAY_STYLE = "modern"; // "classic" | "modern"
 const PARTY_THURSDAY = "2026-11-26"; // ISO date of the party's Thursday — update each event
+const BREAKING_DURATION_MS = 5 * 60 * 1000; // how long the breaking banner stays live
 
 // ============================================================
 // Supabase client
@@ -1160,7 +1161,7 @@ function DisplayScreen() {
           breakingTimerRef.current = setTimeout(() => {
             setBreaking(null);
             breakingEventIdRef.current = null;
-          }, 10 * 60 * 1000);
+          }, BREAKING_DURATION_MS);
         }
       } else if (latest.type === "clear_breaking") {
         if (breakingTimerRef.current) clearTimeout(breakingTimerRef.current);
@@ -1282,7 +1283,7 @@ function BroadsheetScreen() {
           breakingTimerRef.current = setTimeout(() => {
             setBreaking(null);
             breakingEventIdRef.current = null;
-          }, 10 * 60 * 1000);
+          }, BREAKING_DURATION_MS);
         }
       } else if (latest.type === "clear_breaking") {
         if (breakingTimerRef.current) clearTimeout(breakingTimerRef.current);
@@ -1708,6 +1709,26 @@ function GMPanel() {
   const [pw, setPw] = useState("");
   const [articles, setArticles] = useState([]);
   const [breakingMsg, setBreakingMsg] = useState("");
+  const [activeBreaking, setActiveBreaking] = useState(null);
+  const [breakingExpiresAt, setBreakingExpiresAt] = useState(null);
+  const [countdown, setCountdown] = useState(null);
+
+  async function fetchBreaking() {
+    const data = await supabase.query("events", { select: "*", order: "created_at.desc" });
+    if (Array.isArray(data) && data.length > 0) {
+      const latest = data[0];
+      if (latest.type === "breaking_news") {
+        const expiresAt = new Date(latest.created_at).getTime() + BREAKING_DURATION_MS;
+        if (Date.now() < expiresAt) {
+          setActiveBreaking(latest.payload?.message || "BREAKING NEWS");
+          setBreakingExpiresAt(expiresAt);
+          return;
+        }
+      }
+    }
+    setActiveBreaking(null);
+    setBreakingExpiresAt(null);
+  }
 
   async function gmAction(action, params = {}) {
     const res = await fetch("/api/gm", {
@@ -1737,6 +1758,7 @@ function GMPanel() {
     const data = await res.json();
     if (Array.isArray(data)) setArticles(data);
     setAuthed(true);
+    fetchBreaking();
   }
 
   async function toggleHide(article) {
@@ -1758,15 +1780,30 @@ function GMPanel() {
 
   async function triggerBreaking() {
     if (!breakingMsg.trim()) return;
-    await gmAction("trigger_breaking", { message: breakingMsg });
+    const msg = breakingMsg.trim();
+    await gmAction("trigger_breaking", { message: msg });
     setBreakingMsg("");
-    alert("BREAKING banner triggered on the display!");
+    setActiveBreaking(msg);
+    setBreakingExpiresAt(Date.now() + BREAKING_DURATION_MS);
   }
 
   async function clearBreaking() {
     await gmAction("clear_breaking");
-    alert("Breaking banner cleared.");
+    setActiveBreaking(null);
+    setBreakingExpiresAt(null);
   }
+
+  useEffect(() => {
+    if (!breakingExpiresAt) { setCountdown(null); return; }
+    function tick() {
+      const remaining = Math.max(0, Math.ceil((breakingExpiresAt - Date.now()) / 1000));
+      setCountdown(remaining);
+      if (remaining === 0) { setActiveBreaking(null); setBreakingExpiresAt(null); }
+    }
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [breakingExpiresAt]);
 
   if (!authed) {
     return (
@@ -1814,6 +1851,26 @@ function GMPanel() {
       <button className="gm-btn hide" onClick={clearBreaking} style={{ marginBottom: "8px" }}>
         Clear breaking banner
       </button>
+      <div style={{
+        marginBottom: "16px",
+        padding: "8px 12px",
+        background: activeBreaking ? "var(--red)" : "var(--paper-dark)",
+        color: activeBreaking ? "var(--paper)" : "var(--muted)",
+        fontFamily: "'IM Fell English', serif",
+        fontSize: "13px",
+        borderLeft: `4px solid ${activeBreaking ? "var(--red)" : "var(--paper-darker)"}`,
+      }}>
+        {activeBreaking ? (
+          <>
+            <strong>LIVE:</strong> {activeBreaking}
+            {countdown !== null && (
+              <span style={{ opacity: 0.8, marginLeft: "12px" }}>
+                — clears in {Math.floor(countdown / 60)}:{String(countdown % 60).padStart(2, "0")}
+              </span>
+            )}
+          </>
+        ) : "No active breaking banner."}
+      </div>
 
       <div className="gm-section-title">All Articles ({articles.length})</div>
       {articles.map(a => (
@@ -1862,7 +1919,8 @@ export default function App() {
     if (h === "#submit") return "submit";
     if (h === "#gm") return "gm";
     if (h === "#broadsheet") return "broadsheet";
-    return "display";
+    if (h === "#display") return "display";
+    return "broadsheet";
   });
 
   function navigate(r) {
@@ -1875,9 +1933,6 @@ export default function App() {
       <style>{styles}</style>
       <div className="nav">
         <span className="nav-brand">WSJ</span>
-        <span className={`nav-link ${route === "display" ? "active" : ""}`} onClick={() => navigate("display")}>
-          Feed
-        </span>
         <span className={`nav-link ${route === "broadsheet" ? "active" : ""}`} onClick={() => navigate("broadsheet")}>
           Broadsheet
         </span>

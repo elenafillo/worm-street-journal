@@ -1,3 +1,6 @@
+import dotenv from "dotenv";
+dotenv.config({ path: ".env.local" });
+
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const GM_PASSWORD = process.env.GM_PASSWORD;
@@ -12,6 +15,7 @@ function serviceHeaders() {
 }
 
 export default async function handler(req, res) {
+  console.log("ENV CHECK:", !!process.env.GM_PASSWORD, !!process.env.SUPABASE_URL, !!process.env.SUPABASE_SERVICE_ROLE_KEY);
   if (req.method !== "POST") return res.status(405).end();
 
   const { password, action, ...params } = req.body;

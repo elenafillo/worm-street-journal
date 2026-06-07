@@ -13,8 +13,8 @@ Working file is `src/App_1905.jsx` (imported by `src/main.jsx` as `App.jsx` — 
 
 | Route | URL | What it does |
 |---|---|---|
-| Feed | `/#display` | Vertical article feed, auto-refreshes every 4s, alternates image left/right |
-| Broadsheet | `/#broadsheet` | Fixed-canvas newspaper front page (see below) |
+| Broadsheet | `/#broadsheet` | Fixed-canvas newspaper front page — **default landing page** (see below) |
+| Feed | `/#display` | Vertical article feed, auto-refreshes every 4s, alternates image left/right — tab hidden from nav for now |
 | Submit | `/#submit` | Guest article form with optional image upload (≤5MB) |
 | GM Panel | `/#gm` | Password-gated moderation: hide/delete articles, headline toggle, fire BREAKING NEWS banner |
 
@@ -29,7 +29,7 @@ Working file is `src/App_1905.jsx` (imported by `src/main.jsx` as `App.jsx` — 
 ### Notable implementation details
 - **GM panel security** — password is checked server-side in `api/gm.js` (Vercel serverless function). The GM password and Supabase service role key live in Vercel env vars and are never sent to the browser. The frontend only holds the anon key (public by design).
 - **No real-time websockets** — `supabase.subscribe()` is a `setInterval` polling every 4 seconds. Works fine for the party; upgrade to Supabase Realtime channels if you want true push.
-- Breaking news ticker works on both Feed and Broadsheet. Auto-clears after 10 minutes or when GM manually clears.
+- Breaking news ticker works on both Feed and Broadsheet. Auto-clears after 5 minutes (controlled by `BREAKING_DURATION_MS` constant at top of file) or when GM manually clears. The GM panel shows the currently live banner text and a live countdown to when it will auto-clear.
 - Image upload goes directly to Supabase Storage via `fetch`; returns a public URL stored on the article row.
 - Two visual styles: **Classic** (Playfair + UnifrakturMaguntia, sepia paper) and **Modern** (clean sans-serif, white background, bold type, red accent). Switched via `DISPLAY_STYLE` constant at top of file.
 - Hash routing — query params must be parsed from `window.location.hash`, not `window.location.search`.
@@ -57,13 +57,14 @@ GM controls the `can_be_headline` toggle per article (visible in `/#gm`). Only a
 
 ## Todo
 
-### Display the banner text under the banner box in the GM panel
-
 ### Make a mobile-friendly display
 
 ### Add a "print" button to broadsheet that saves the current display as an image
 Also, add a "Extra, extra" button to the GM panel, which captures the current display as an image and does the spinning effect from old-school TV.
 
+## make the accent color of each box change depending on article vs notice vs event
+
+## require a known submission code to be able to post things
 
 ---
 
