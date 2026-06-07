@@ -6,6 +6,7 @@ import { useState, useEffect, useRef } from "react";
 const SUPABASE_URL = "https://bliocisgoedlybzlfytk.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJsaW9jaXNnb2VkbHliemxmeXRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg3MTQ5MzUsImV4cCI6MjA5NDI5MDkzNX0.u3BZQrm6lWSPPd4gvyZOK9koOispIhYLnjqevtj5fCA";
 const DISPLAY_STYLE = "modern"; // "classic" | "modern"
+const PARTY_THURSDAY = "2026-11-26"; // ISO date of the party's Thursday — update each event
 
 // ============================================================
 // Supabase client
@@ -906,6 +907,149 @@ const styles = `
   .gm-btn.headline-on:hover { background: var(--gold); color: var(--paper); }
   .gm-btn.headline-off { color: var(--muted); text-decoration: line-through; }
   .gm-btn.headline-off:hover { background: var(--muted); color: var(--paper); text-decoration: none; }
+
+  /* ── Form type toggle ── */
+  .form-type-toggle {
+    display: flex;
+    margin-bottom: 24px;
+    border: 1px solid var(--paper-darker);
+  }
+
+  .form-type-btn {
+    flex: 1;
+    padding: 10px;
+    background: none;
+    border: none;
+    border-right: 1px solid var(--paper-darker);
+    font-family: 'IM Fell English', serif;
+    font-size: 13px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    cursor: pointer;
+    color: var(--muted);
+    transition: all 0.15s;
+  }
+
+  .form-type-btn:last-child { border-right: none; }
+  .form-type-btn.active { background: var(--ink); color: var(--paper); }
+
+  /* ── Day selector ── */
+  .day-selector { display: flex; gap: 6px; }
+
+  .day-btn {
+    flex: 1;
+    padding: 8px 4px;
+    background: none;
+    border: 1px solid var(--paper-darker);
+    font-family: 'IM Fell English', serif;
+    font-size: 12px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    cursor: pointer;
+    color: var(--muted);
+    transition: all 0.15s;
+  }
+
+  .day-btn.selected { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+  /* ── Sidebar notices & entertainment ── */
+  .sidebar-section-label {
+    font-family: 'Playfair Display', serif;
+    font-weight: 700;
+    font-size: 10px;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 3px;
+    margin-bottom: 6px;
+    margin-top: 10px;
+    color: var(--muted);
+  }
+
+  .sidebar-notice {
+    padding: 5px 0;
+    border-bottom: 1px solid var(--paper-darker);
+  }
+
+  .sidebar-notice:last-child { border-bottom: none; }
+
+  .sidebar-notice-headline {
+    font-family: 'Playfair Display', serif;
+    font-weight: 700;
+    font-size: 11px;
+    line-height: 1.25;
+    color: var(--ink);
+    margin-bottom: 2px;
+  }
+
+  .sidebar-notice-body {
+    font-family: 'IM Fell English', serif;
+    font-size: 10px;
+    line-height: 1.5;
+    color: var(--ink);
+  }
+
+  .sidebar-notice-byline {
+    font-family: 'IM Fell English', serif;
+    font-style: italic;
+    font-size: 9px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  .sidebar-event-time {
+    font-family: 'Playfair Display', serif;
+    font-weight: 700;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    color: var(--red);
+    margin-bottom: 1px;
+  }
+
+  .sidebar-empty {
+    font-family: 'IM Fell English', serif;
+    font-style: italic;
+    font-size: 10px;
+    color: var(--muted);
+    padding: 4px 0 8px;
+  }
+
+  [data-style="modern"] .form-type-btn {
+    font-family: 'Inter', Arial, sans-serif;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+  }
+
+  [data-style="modern"] .day-btn {
+    font-family: 'Inter', Arial, sans-serif;
+    font-size: 11px;
+  }
+
+  [data-style="modern"] .sidebar-section-label {
+    font-family: 'Inter', Arial, sans-serif;
+    font-weight: 700;
+    font-size: 9px;
+    letter-spacing: 1.5px;
+  }
+
+  [data-style="modern"] .sidebar-notice-headline {
+    font-family: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+    font-weight: 700;
+    font-size: 12px;
+  }
+
+  [data-style="modern"] .sidebar-notice-body,
+  [data-style="modern"] .sidebar-notice-byline,
+  [data-style="modern"] .sidebar-empty {
+    font-family: 'Inter', Arial, sans-serif;
+    font-style: normal;
+  }
+
+  [data-style="modern"] .sidebar-event-time {
+    font-family: 'Inter', Arial, sans-serif;
+    font-weight: 700;
+    font-size: 10px;
+  }
 `;
 
 // ============================================================
@@ -919,6 +1063,25 @@ function formatDate(iso) {
 
 function formatTime(iso) {
   return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatEventTime(iso) {
+  const d = new Date(iso);
+  const days = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+  const h = d.getHours() % 12 || 12;
+  const m = String(d.getMinutes()).padStart(2, "0");
+  const ampm = d.getHours() >= 12 ? "PM" : "AM";
+  return `${days[d.getDay()]} ${h}:${m}${ampm}`;
+}
+
+function getPartyDays() {
+  const thu = new Date(`${PARTY_THURSDAY}T00:00:00`);
+  return [
+    { label: "THU", date: thu },
+    { label: "FRI", date: new Date(thu.getTime() + 86400000) },
+    { label: "SAT", date: new Date(thu.getTime() + 2 * 86400000) },
+    { label: "SUN", date: new Date(thu.getTime() + 3 * 86400000) },
+  ];
 }
 
 // ============================================================
@@ -977,7 +1140,7 @@ function DisplayScreen() {
       order: "created_at.desc",
     });
     if (Array.isArray(data)) {
-      setArticles(data.filter(a => !a.hidden));
+      setArticles(data.filter(a => !a.hidden && (!a.article_type || a.article_type === "article")));
     }
     setLoading(false);
   }
@@ -1141,8 +1304,21 @@ function BroadsheetScreen() {
     };
   }, []);
 
+  const visibleArticles = articles.filter(a => !a.article_type || a.article_type === "article");
+
+  const notices = articles
+    .filter(a => a.article_type === "notice")
+    .slice(0, 4);
+
+  const now = Date.now();
+  const events = articles
+    .filter(a => a.article_type === "entertainment" && a.scheduled_at)
+    .filter(a => now < new Date(a.scheduled_at).getTime() + 60 * 60 * 1000)
+    .sort((a, b) => new Date(a.scheduled_at) - new Date(b.scheduled_at))
+    .slice(0, 6);
+
   const headlinePool = mode === "random"
-    ? articles.filter(a => a.can_be_headline !== false)
+    ? visibleArticles.filter(a => a.can_be_headline !== false)
     : [];
 
   useEffect(() => {
@@ -1161,10 +1337,10 @@ function BroadsheetScreen() {
   let secondaryArticles = [];
   if (mode === "random" && headlinePool.length > 0) {
     headline = headlinePool[headlineIdx % headlinePool.length];
-    secondaryArticles = articles.filter(a => a.id !== headline.id).slice(0, 3);
+    secondaryArticles = visibleArticles.filter(a => a.id !== headline.id).slice(0, 3);
   } else {
-    headline = articles[0] || null;
-    secondaryArticles = articles.slice(1, 4);
+    headline = visibleArticles[0] || null;
+    secondaryArticles = visibleArticles.slice(1, 4);
   }
 
   const today = new Date().toLocaleDateString("en-GB", {
@@ -1197,7 +1373,7 @@ function BroadsheetScreen() {
                 <span className="spinner" /> Awaiting dispatches from the trading floor...
               </div>
             )}
-            {!loading && articles.length === 0 && (
+            {!loading && visibleArticles.length === 0 && (
               <div className="empty-state">No reports filed yet. The worms are still burrowing.</div>
             )}
             {headline && (
@@ -1236,9 +1412,29 @@ function BroadsheetScreen() {
 
           <div className="broadsheet-sidebar">
             <div className="broadsheet-sidebar-title">Notices &amp; Entertainment</div>
-            <div style={{ fontFamily: "'IM Fell English', serif", fontStyle: "italic", color: "var(--muted)", fontSize: "15px", lineHeight: 1.6 }}>
-              Coming soon.
-            </div>
+
+            <div className="sidebar-section-label">Notices</div>
+            {notices.length === 0 ? (
+              <div className="sidebar-empty">No notices posted.</div>
+            ) : notices.map(n => (
+              <div key={n.id} className="sidebar-notice">
+                <div className="sidebar-notice-headline">{n.headline}</div>
+                <div className="sidebar-notice-body">{n.body}</div>
+                <div className="sidebar-notice-byline">— {n.author_name}</div>
+              </div>
+            ))}
+
+            <div className="sidebar-section-label">Entertainment</div>
+            {events.length === 0 ? (
+              <div className="sidebar-empty">No events listed.</div>
+            ) : events.map(e => (
+              <div key={e.id} className="sidebar-notice">
+                <div className="sidebar-event-time">{formatEventTime(e.scheduled_at)}</div>
+                <div className="sidebar-notice-headline">{e.headline}</div>
+                <div className="sidebar-notice-body">{e.body}</div>
+                <div className="sidebar-notice-byline">— {e.author_name}</div>
+              </div>
+            ))}
           </div>
         </div>
       </div>
@@ -1250,18 +1446,35 @@ function BroadsheetScreen() {
 // Article Submission Form
 // ============================================================
 function SubmitForm() {
-  const [form, setForm] = useState({
-    author_name: "",
-    headline: "",
-    body: "",
-  });
+  const [isNoticeMode, setIsNoticeMode] = useState(false);
+  const [form, setForm] = useState({ author_name: "", headline: "", body: "" });
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  const [selectedDay, setSelectedDay] = useState(null); // index 0–3
+  const [selectedTime, setSelectedTime] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState("");
   const fileRef = useRef();
+  const partyDays = getPartyDays();
+
+  const headlineMax = isNoticeMode ? 40 : 120;
+  const bodyMax = isNoticeMode ? 160 : 600;
+
+  function switchMode(noticeMode) {
+    setIsNoticeMode(noticeMode);
+    setSelectedDay(null);
+    setSelectedTime("");
+    setImageFile(null);
+    setImagePreview(null);
+    setError("");
+    setForm(f => ({
+      ...f,
+      headline: f.headline.slice(0, noticeMode ? 40 : 120),
+      body: f.body.slice(0, noticeMode ? 160 : 600),
+    }));
+  }
 
   function handleChange(e) {
     setForm(f => ({ ...f, [e.target.name]: e.target.value }));
@@ -1269,10 +1482,7 @@ function SubmitForm() {
 
   function handleImageFile(file) {
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
-      setError("Image must be under 5MB.");
-      return;
-    }
+    if (file.size > 5 * 1024 * 1024) { setError("Image must be under 5MB."); return; }
     setImageFile(file);
     setImagePreview(URL.createObjectURL(file));
     setError("");
@@ -1290,24 +1500,53 @@ function SubmitForm() {
       setError("Please fill in your name, headline, and story.");
       return;
     }
+    if (isNoticeMode) {
+      const hasDay = selectedDay !== null;
+      const hasTime = selectedTime !== "";
+      if (hasDay !== hasTime) {
+        setError("Please select both a day and a time for the event, or leave both blank for a general notice.");
+        return;
+      }
+    }
     setSubmitting(true);
     setError("");
     try {
       let image_url = null;
-      if (imageFile) {
-        image_url = await supabase.uploadImage(imageFile);
+      if (!isNoticeMode && imageFile) image_url = await supabase.uploadImage(imageFile);
+
+      let article_type = "article";
+      let scheduled_at = null;
+      if (isNoticeMode) {
+        const isEvent = selectedDay !== null && selectedTime !== "";
+        if (isEvent) {
+          article_type = "entertainment";
+          const dayDate = partyDays[selectedDay].date;
+          const [hours, minutes] = selectedTime.split(":").map(Number);
+          const eventDate = new Date(dayDate);
+          eventDate.setHours(hours, minutes, 0, 0);
+          scheduled_at = eventDate.toISOString();
+        } else {
+          article_type = "notice";
+        }
       }
+
       const result = await supabase.insert("articles", {
         author_name: form.author_name,
         headline: form.headline,
         body: form.body,
         image_url,
+        article_type,
+        scheduled_at,
+        can_be_headline: article_type === "article",
       });
+
       if (Array.isArray(result) && result[0]?.id) {
         setSuccess(true);
         setForm(f => ({ ...f, headline: "", body: "" }));
         setImageFile(null);
         setImagePreview(null);
+        setSelectedDay(null);
+        setSelectedTime("");
         setTimeout(() => setSuccess(false), 5000);
       } else {
         setError("Something went wrong. Please try again.");
@@ -1325,6 +1564,21 @@ function SubmitForm() {
       <div className="form-masthead">
         <div className="form-title">The Worm Street Journal</div>
         <div className="form-subtitle">File a Dispatch to the Trading Floor</div>
+      </div>
+
+      <div className="form-type-toggle">
+        <button
+          className={`form-type-btn ${!isNoticeMode ? "active" : ""}`}
+          onClick={() => switchMode(false)}
+        >
+          Article
+        </button>
+        <button
+          className={`form-type-btn ${isNoticeMode ? "active" : ""}`}
+          onClick={() => switchMode(true)}
+        >
+          Notice / Event
+        </button>
       </div>
 
       <div className="form-group">
@@ -1346,69 +1600,100 @@ function SubmitForm() {
           name="headline"
           value={form.headline}
           onChange={handleChange}
-          placeholder="e.g. SLIMECO CEO SPOTTED IN SUSPICIOUS TUNNEL"
-          maxLength={120}
+          placeholder={isNoticeMode ? "e.g. Drinks at the Burrow" : "e.g. SLIMECO CEO SPOTTED IN SUSPICIOUS TUNNEL"}
+          maxLength={headlineMax}
         />
-        <div className="char-count">{form.headline.length}/120</div>
+        <div className="char-count">{form.headline.length}/{headlineMax}</div>
       </div>
 
       <div className="form-group">
-        <label className="form-label">Story</label>
+        <label className="form-label">{isNoticeMode ? "Details" : "Story"}</label>
         <textarea
           className="form-textarea"
           name="body"
           value={form.body}
           onChange={handleChange}
-          placeholder="Write your report, rumour, or market intelligence here..."
-          maxLength={600}
+          placeholder={isNoticeMode ? "What's happening? Where? Any details..." : "Write your report, rumour, or market intelligence here..."}
+          maxLength={bodyMax}
         />
-        <div className="char-count">{form.body.length}/600</div>
+        <div className="char-count">{form.body.length}/{bodyMax}</div>
       </div>
 
-      <div className="form-group">
-        <label className="form-label">Image (Optional · Max 5MB)</label>
-        <div
-          className={`image-upload-area ${dragOver ? "drag-over" : ""}`}
-          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-          onClick={() => fileRef.current?.click()}
-        >
-          {imagePreview ? (
-            <>
-              <img className="image-preview" src={imagePreview} alt="Preview" />
-              <br />
+      {isNoticeMode && (
+        <div className="form-group">
+          <label className="form-label">Event Time — leave blank for a general notice</label>
+          <div className="day-selector">
+            {partyDays.map((d, i) => (
               <button
-                className="image-remove"
-                onClick={e => { e.stopPropagation(); setImageFile(null); setImagePreview(null); }}
+                key={d.label}
+                type="button"
+                className={`day-btn ${selectedDay === i ? "selected" : ""}`}
+                onClick={() => setSelectedDay(selectedDay === i ? null : i)}
               >
-                Remove image
+                {d.label}
               </button>
-            </>
-          ) : (
-            <label className="image-upload-label">
-              Tap to attach a photograph, or drag one here
-            </label>
-          )}
+            ))}
+          </div>
           <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            style={{ display: "none" }}
-            onChange={e => handleImageFile(e.target.files[0])}
+            className="form-input"
+            type="time"
+            value={selectedTime}
+            onChange={e => setSelectedTime(e.target.value)}
+            style={{ marginTop: "8px" }}
           />
         </div>
-      </div>
+      )}
+
+      {!isNoticeMode && (
+        <div className="form-group">
+          <label className="form-label">Image (Optional · Max 5MB)</label>
+          <div
+            className={`image-upload-area ${dragOver ? "drag-over" : ""}`}
+            onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={handleDrop}
+            onClick={() => fileRef.current?.click()}
+          >
+            {imagePreview ? (
+              <>
+                <img className="image-preview" src={imagePreview} alt="Preview" />
+                <br />
+                <button
+                  className="image-remove"
+                  onClick={e => { e.stopPropagation(); setImageFile(null); setImagePreview(null); }}
+                >
+                  Remove image
+                </button>
+              </>
+            ) : (
+              <label className="image-upload-label">
+                Tap to attach a photograph, or drag one here
+              </label>
+            )}
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={e => handleImageFile(e.target.files[0])}
+            />
+          </div>
+        </div>
+      )}
 
       {error && <div className="error-msg">{error}</div>}
 
       <button className="submit-btn" onClick={handleSubmit} disabled={submitting}>
-        {submitting ? <><span className="spinner" />Filing Story...</> : "File to the Journal"}
+        {submitting
+          ? <><span className="spinner" />Filing...</>
+          : isNoticeMode ? "Post to Noticeboard" : "File to the Journal"}
       </button>
 
       {success && (
         <div className="success-msg">
-          ✓ Your dispatch has been filed. It will appear on the wall momentarily.
+          {isNoticeMode
+            ? "✓ Your notice has been posted to the board."
+            : "✓ Your dispatch has been filed. It will appear on the wall momentarily."}
         </div>
       )}
     </div>
@@ -1443,6 +1728,10 @@ function GMPanel() {
     const res = await gmAction("fetch_articles");
     if (res.status === 403) {
       alert("Wrong password, worm.");
+      return;
+    }
+    if (!res.ok) {
+      alert("Server error — check Vercel env vars.");
       return;
     }
     const data = await res.json();
@@ -1533,6 +1822,8 @@ function GMPanel() {
           <div className="gm-article-meta">
             By {a.author_name} · {formatDate(a.created_at)} {formatTime(a.created_at)}
             {a.hidden && " · HIDDEN"}
+            {a.article_type === "notice" && " · NOTICE"}
+            {a.article_type === "entertainment" && ` · EVENT${a.scheduled_at ? " " + formatEventTime(a.scheduled_at) : ""}`}
           </div>
           <div style={{ fontSize: "13px", marginBottom: "10px", fontFamily: "'IM Fell English', serif" }}>
             {a.body.slice(0, 120)}{a.body.length > 120 ? "…" : ""}
@@ -1540,12 +1831,14 @@ function GMPanel() {
           <button className={`gm-btn ${a.hidden ? "show" : "hide"}`} onClick={() => toggleHide(a)}>
             {a.hidden ? "Show" : "Hide"}
           </button>
-          <button
-            className={`gm-btn ${a.can_be_headline !== false ? "headline-on" : "headline-off"}`}
-            onClick={() => toggleHeadline(a)}
-          >
-            {a.can_be_headline !== false ? "Headline ✓" : "No Headline"}
-          </button>
+          {(!a.article_type || a.article_type === "article") && (
+            <button
+              className={`gm-btn ${a.can_be_headline !== false ? "headline-on" : "headline-off"}`}
+              onClick={() => toggleHeadline(a)}
+            >
+              {a.can_be_headline !== false ? "Headline ✓" : "No Headline"}
+            </button>
+          )}
           <button className="gm-btn delete" onClick={() => deleteArticle(a.id)}>
             Delete
           </button>
