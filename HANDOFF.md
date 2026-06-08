@@ -28,6 +28,7 @@ Working file is `src/App_1905.jsx` (imported by `src/main.jsx` as `App.jsx` — 
 
 ### Notable implementation details
 - **GM panel security** — password is checked server-side in `api/gm.js` (Vercel serverless function). The GM password and Supabase service role key live in Vercel env vars and are never sent to the browser. The frontend only holds the anon key (public by design).
+- **Submission code** — guest article submission is gated by a code field in the form. On submit, the frontend POSTs to `api/submit.js` (Vercel serverless function) which checks the code against `SUBMISSION_CODE` env var before inserting into Supabase using the service role key. The code never touches the client bundle. Supabase RLS has INSERT removed from the anon role on `articles`, so direct API calls without the code are also blocked. To change the code, update `SUBMISSION_CODE` in the Vercel dashboard (and `.env.local` for local dev).
 - **No real-time websockets** — `supabase.subscribe()` is a `setInterval` polling every 4 seconds. Works fine for the party; upgrade to Supabase Realtime channels if you want true push.
 - Breaking news ticker works on both Feed and Broadsheet. Auto-clears after 5 minutes (controlled by `BREAKING_DURATION_MS` constant at top of file) or when GM manually clears. The GM panel shows the currently live banner text and a live countdown to when it will auto-clear.
 - Image upload goes directly to Supabase Storage via `fetch`; returns a public URL stored on the article row.
@@ -65,8 +66,6 @@ GM controls the `can_be_headline` toggle per article (visible in `/#gm`). Only a
 Also, add a "Extra, extra" button to the GM panel, which captures the current display as an image and does the spinning effect from old-school TV.
 
 ## make the accent color of each box change depending on article vs notice vs event
-
-## require a known submission code to be able to post things
 
 ---
 

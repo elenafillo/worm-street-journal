@@ -1535,6 +1535,7 @@ function SubmitForm() {
   const [dragOver, setDragOver] = useState(false);
   const [selectedDay, setSelectedDay] = useState(null); // index 0–3
   const [selectedTime, setSelectedTime] = useState("");
+  const [submissionCode, setSubmissionCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState("");
@@ -1590,6 +1591,10 @@ function SubmitForm() {
         return;
       }
     }
+    if (!submissionCode.trim()) {
+      setError("Please enter the submission code.");
+      return;
+    }
     setSubmitting(true);
     setError("");
     try {
@@ -1612,17 +1617,25 @@ function SubmitForm() {
         }
       }
 
-      const result = await supabase.insert("articles", {
-        author_name: form.author_name,
-        headline: form.headline,
-        body: form.body,
-        image_url,
-        article_type,
-        scheduled_at,
-        can_be_headline: article_type === "article",
+      const res = await fetch("/api/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          submission_code: submissionCode,
+          author_name: form.author_name,
+          headline: form.headline,
+          body: form.body,
+          image_url,
+          article_type,
+          scheduled_at,
+          can_be_headline: article_type === "article",
+        }),
       });
+      const result = await res.json();
 
-      if (Array.isArray(result) && result[0]?.id) {
+      if (!res.ok) {
+        setError(result.error || "Something went wrong. Please try again.");
+      } else if (Array.isArray(result) && result[0]?.id) {
         setSuccess(true);
         setForm(f => ({ ...f, headline: "", body: "" }));
         setImageFile(null);
@@ -1632,7 +1645,7 @@ function SubmitForm() {
         setTimeout(() => setSuccess(false), 5000);
       } else {
         setError("Something went wrong. Please try again.");
-        console.error("Insert result:", result);
+        console.error("Submit result:", result);
       }
     } catch (err) {
       setError("Something went wrong filing your story. Try again.");
@@ -1762,6 +1775,17 @@ function SubmitForm() {
           </div>
         </div>
       )}
+
+      <div className="form-group">
+        <label className="form-label">Submission Code</label>
+        <input
+          className="form-input"
+          type="text"
+          value={submissionCode}
+          onChange={e => setSubmissionCode(e.target.value)}
+          placeholder="Enter the code to file your story"
+        />
+      </div>
 
       {error && <div className="error-msg">{error}</div>}
 
