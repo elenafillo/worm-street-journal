@@ -38,26 +38,28 @@ Working file is `src/App_1905.jsx` (imported by `src/main.jsx` as `App.jsx` — 
 - **Event expiry** — filtering is client-side: events with `scheduled_at` more than 1 hour in the past are hidden from the broadsheet. No DB changes needed; they naturally reappear if someone sets a future date.
 
 ### Broadsheet (`/#broadsheet`)
-Fixed 1200×960px canvas centred on a dark background. Use browser zoom (Ctrl+/−) to fit the projected screen — the layout never reflows.
+Fixed 1200×960px canvas centred on a dark background. Use browser zoom (Ctrl+/−) to fit the projected screen — the layout never reflows **on desktop**. On mobile (≤768px) it automatically reflows into a scrollable single-column layout (see below).
 
 Two modes controlled via URL params:
 - **`?mode=recent`** (default) — most recent article is the hero, next 3 fill the secondary row
 - **`?mode=random&speed=N`** — hero rotates randomly through headline-eligible articles every N seconds (min 5, default 15)
 
-Layout:
+**Desktop layout:**
 - Full-width masthead
 - Left (~80%): large hero article (headline + square image + full body) above a 3-column secondary row (each with square image + headline + excerpt)
 - Right sidebar (~20%): "Notices & Entertainment" — two sections:
   - **Notices**: up to 4 most recent, no time, always visible until GM hides
   - **Entertainment**: up to 6 events sorted soonest first, auto-removed client-side 1h after `scheduled_at`
 
+**Mobile layout (≤768px, CSS `@media` only — no JSX changes):**
+- Masthead → hero (full-width image above text) → secondary articles as stacked image-left/text-right cards → Notices & Entertainment section at the bottom
+- Implemented via a single `@media (max-width: 768px)` block at the end of the `styles` string; uses CSS grid on `.broadsheet-secondary-item` to keep image pinned left without a JSX wrapper
+
 GM controls the `can_be_headline` toggle per article (visible in `/#gm`). Only articles with `can_be_headline = true` (the default) enter the random rotation hero pool.
 
 ---
 
 ## Todo
-
-### Make a mobile-friendly display
 
 ### Add a "print" button to broadsheet that saves the current display as an image
 Also, add a "Extra, extra" button to the GM panel, which captures the current display as an image and does the spinning effect from old-school TV.
@@ -93,8 +95,9 @@ Also, add a "Extra, extra" button to the GM panel, which captures the current di
 
 ```bash
 npm install
-npm run dev        # runs on localhost:5173 — guest-facing routes only
-vercel dev         # runs on localhost:3000 — use this to test the GM panel (api/gm.js)
+npm run dev               # runs on localhost:5173 — guest-facing routes only
+npm run dev -- --host     # same, but also exposes on local network — open the Network URL on your phone to test mobile layouts
+vercel dev                # runs on localhost:3000 — use this to test the GM panel (api/gm.js)
 ```
 
 Supabase project is already live and connected. No local Supabase needed.
