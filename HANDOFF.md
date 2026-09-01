@@ -9,7 +9,11 @@ A weekend party game — **Worm Street** (worms + Wall Street). The centrepiece 
 
 ## What's Built: Worm Street Journal (WSJ)
 
-Working file is `src/App_1905.jsx` (imported by `src/main.jsx` as `App.jsx` — keep in sync).
+Working file is `src/App.jsx` (imported by `src/main.jsx`) — the only file the app actually builds from.
+
+Two other `.jsx` files sit alongside it. Both are **untracked, kept locally for reference only, and imported by nothing** — Vite never bundles them:
+- `src/App_old.jsx` — the previous version of the app.
+- `src/App_broadsheet.jsx` — an early broadsheet-only prototype. Contains a hardcoded `GM_PASSWORD` on line 8, from before auth moved server-side into `api/gm.js`. Untracked precisely so that stays out of the repo — don't re-add it.
 
 | Route | URL | What it does |
 |---|---|---|
@@ -32,10 +36,10 @@ Working file is `src/App_1905.jsx` (imported by `src/main.jsx` as `App.jsx` — 
 - **No real-time websockets** — `supabase.subscribe()` is a `setInterval` polling every 4 seconds. Works fine for the party; upgrade to Supabase Realtime channels if you want true push.
 - Breaking news ticker works on both Feed and Broadsheet. Auto-clears after 5 minutes (controlled by `BREAKING_DURATION_MS` constant at top of file) or when GM manually clears. The GM panel shows the currently live banner text and a live countdown to when it will auto-clear.
 - Image upload goes directly to Supabase Storage via `fetch`; returns a public URL stored on the article row.
-- Two visual styles: **Classic** (Playfair + UnifrakturMaguntia, sepia paper) and **Modern** (clean sans-serif, white background, bold type, red accent). Switched via `DISPLAY_STYLE` constant at top of file.
+- Two visual styles: **Classic** (Playfair + UnifrakturMaguntia, sepia paper) and **Modern** (clean sans-serif, white background, bold type, red accent). Switched via `DISPLAY_STYLE` constant at top of file — **currently set to `"modern"`**.
 - Hash routing — query params must be parsed from `window.location.hash`, not `window.location.search`.
 - **Notices & Entertainment** — `article_type` determines routing: `'article'` → main feed & broadsheet columns; `'notice'` → sidebar Notices section; `'entertainment'` → sidebar Entertainment section. Notices/events never appear in the main feed or broadsheet hero. `can_be_headline` is set `false` on insert for non-articles so they can't enter the random hero rotation.
-- **Party dates** — `PARTY_THURSDAY` constant at top of file (ISO date string). Update this before each event. The submit form's day buttons (THU/FRI/SAT/SUN) derive their actual dates from it. Entertainment event timestamps are constructed in the guest's local timezone.
+- **Party dates** — `PARTY_THURSDAY` constant at top of file (ISO date string). Update this before each event — **currently set to `2026-11-26`**. The submit form's day buttons (THU/FRI/SAT/SUN) derive their actual dates from it. Entertainment event timestamps are constructed in the guest's local timezone.
 - **Event expiry** — filtering is client-side: events with `scheduled_at` more than 1 hour in the past are hidden from the broadsheet. No DB changes needed; they naturally reappear if someone sets a future date.
 
 ### Broadsheet (`/#broadsheet`)
@@ -60,12 +64,18 @@ GM controls the `can_be_headline` toggle per article (visible in `/#gm`). Only a
 
 ---
 
-## Todo
+## Open Work
 
-### Add a "print" button to broadsheet that saves the current display as an image
-Also, add a "Extra, extra" button to the GM panel, which captures the current display as an image and does the spinning effect from old-school TV.
+### Next up
+- **Print button on the broadsheet** — saves the current display as an image. Paired with an "Extra, extra" button in the GM panel that captures the display and runs the old-school spinning-newspaper TV effect. Needs a capture library (e.g. `html-to-image`); nothing is installed yet.
+- **Accent colour per box type** — vary the accent depending on article vs notice vs event. Right now `article_type` only drives routing and text labels; notices and events share the same `.sidebar-notice` class.
+- **Remove the "PRICE: 1 WORMCOIN" text** — two occurrences in `src/App.jsx` (feed masthead and broadsheet masthead).
 
-## make the accent color of each box change depending on article vs notice vs event
+### Nice-to-have
+- Ticker tag on articles (links to a WEX stock once WEX exists)
+- Article image moderation in GM panel (preview before showing)
+- Sound effect when BREAKING banner fires
+- ~~Party-code gate on `/#submit`~~ ✓ Done — see **Submission code** under Notable implementation details
 
 ---
 
@@ -79,14 +89,8 @@ Also, add a "Extra, extra" button to the GM panel, which captures the current di
 - Price movement logic (time-based decay? GM-triggered events?)
 
 ### Deployment
-- ~~Deploy to Vercel~~ ✓ Done — live at worm-street-journal.vercel.app
+- ~~Deploy to Vercel~~ ✓ Done — live at https://worm-street-journal.vercel.app
 - Point a domain / share QR code with guests
-
-### Optional / nice-to-have
-- Ticker tag on articles (links to a WEX stock once WEX exists)
-- Article image moderation in GM panel (preview before showing)
-- Sound effect when BREAKING banner fires
-- Party-code gate on `/#submit`
 
 ---
 

@@ -1,16 +1,37 @@
-# React + Vite
+# Worm Street
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A weekend party game — worms meet Wall Street. The centrepiece is a projected wall display running two live panels: a stock exchange (WEX) and a newspaper, the **Worm Street Journal**. Guests file stories, notices and event listings from their phones; a GM moderates from a password-gated panel and can fire BREAKING NEWS across the display.
 
-Currently, two official plugins are available:
+The Worm Street Journal is built and deployed. WEX is not started yet.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+**Live:** https://worm-street-journal.vercel.app
 
-## React Compiler
+| Route | What it does |
+|---|---|
+| [`/#broadsheet`](https://worm-street-journal.vercel.app/#broadsheet) | Newspaper front page — the projected display, and the default landing page |
+| [`/#submit`](https://worm-street-journal.vercel.app/#submit) | Guest submission form, gated by a party code |
+| [`/#gm`](https://worm-street-journal.vercel.app/#gm) | Moderation panel, password-gated |
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+**Stack:** React + Vite · Supabase (Postgres + Storage) · Vercel
 
-## Expanding the ESLint configuration
+## Running it locally
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```bash
+npm install
+npm run dev               # localhost:5173 — guest-facing routes
+npm run dev -- --host     # same, plus your local network, for testing on a phone
+vercel dev                # localhost:3000 — needed to test the GM panel
+```
+
+Supabase is already live and connected; no local instance required. Env vars for local dev go in `.env.local` (git-ignored) — see `.env.example`.
+
+## Next steps
+
+- Print button on the broadsheet, plus an "Extra, extra" capture-and-spin effect in the GM panel
+- Distinct accent colours for articles vs notices vs events
+- Point a domain at it and get a QR code to guests
+- Build WEX
+
+## More detail
+
+[**HANDOFF.md**](HANDOFF.md) is the working document — data model, architecture decisions, the full backlog, and the constants you need to update before each party (notably `PARTY_THURSDAY`).
