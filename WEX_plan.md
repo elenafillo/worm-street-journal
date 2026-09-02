@@ -27,7 +27,7 @@ which also settles dashboard-vs-board, the nav, and the light sheet.
 | 5 | `api/wexgm.js` + WEX admin (Exchange / Companies / Players) | ✅ **18/18** |
 | 6 | **The WEX dashboard** — public `#wex`: price chart, health, leaderboards, tape (§8) | ✅ `dashboard.sql` run, seen in a browser, committed |
 | 6.5 | In-game explanations (gate · trade desk · wall dialog) | ✅ built |
-| 6.6 | **Price drift** — the weather (§5.1) | 🟡 **code written and builds · needs `drift.sql` run, then a look** |
+| 6.6 | **Price drift** — the weather (§5.1) | ✅ installed and drifting · 🟡 re-run `drift.sql` to add the `pg_cron` heartbeat |
 | 7 | **The price board** — `#board`, seven enormous rows + sparklines. Optional; §8 explains why it is its own screen | ⬜ not started |
 | 8 | Dry run, tune `liquidity`, update HANDOFF.md | ⬜ not started |
 
@@ -60,20 +60,20 @@ Paste a file, Run (Ctrl+Enter), then open a new query tab for the next one.
 
 1. [x] ~~schema.sql~~ · [x] ~~seed.sql~~ · [x] ~~players.seed.sql~~ — all loaded and verified
 2. [x] ~~Re-run schema.sql~~ — the four `wex_*` functions are installed; events, set-price and both resets work
-3. [ ] **`supabase/dashboard.sql`** — the two aggregate views and `companies.color`. Doesn't exist yet;
-   it is stage 6a, written out in [§8.1](#81-stage-6a--what-the-panel-is-allowed-to-read). Nothing on the
-   dashboard can be built before it, and it is the only SQL phases 6 and 7 need between them.
-4. [ ] **`supabase/drift.sql`** — the four weather dials on `market_state` and `wex_drift()`.
-   Until it runs, the GM Weather panel will error and the two poll paths that call the RPC
-   will log a missing-function error. Drift stays off until you switch it on. See [§5.1](#51-price-drift--the-weather).
-5. [ ] **Re-paste [supabase/smoke_test.sql](supabase/smoke_test.sql)** once — check 5 asserted the
+3. [x] ~~**`supabase/dashboard.sql`**~~ — `companies.color` and the two aggregate views are in.
+4. [x] ~~**`supabase/drift.sql`**~~ — the weather dials and `wex_drift()` are in and drifting.
+5. [ ] **Re-run [supabase/drift.sql](supabase/drift.sql)** — it has gained the `pg_cron` heartbeat
+   (§3 of the file). Enable **pg_cron** under Database → Extensions first; the file guards on it
+   and will skip the schedule with a notice if it is missing. Idempotent, and `cron.schedule()`
+   upserts by name, so re-running cannot stack up duplicate jobs.
+6. [ ] **Re-paste [supabase/smoke_test.sql](supabase/smoke_test.sql)** once — check 5 asserted the
    round-trip spread was under 1,000 ⌀; it is exactly 1,080 ⌀ (`q·p·x²/2`). The test was wrong,
    not the engine. Low priority: it only replaces the stored test function.
-5. [ ] Edit the seven companies in the Table Editor — real names, tickers, CEO names, blurbs.
+7. [ ] Edit the seven companies in the Table Editor — real names, tickers, CEO names, blurbs.
    Currently placeholders: ANL MLC CST BUR SLM CMP SEG, all at 100,000 ⌀.
 
-Expect `security_definer_view` warnings in Supabase's database linter — two today
-on `leaderboard` and `trade_tape`, four once `dashboard.sql` lands. All intentional;
+Expect four `security_definer_view` warnings in Supabase's database linter, on
+`leaderboard`, `trade_tape`, `market_health` and `company_stats`. All intentional;
 see §7 and §8.1.
 
 ### Resetting between runs
@@ -94,7 +94,7 @@ To change who plays or how rich they are, re-run `generate-players.mjs` and load
 
 | Decision | Why |
 |---|---|
-| Market-driven prices + GM events; ~~no random drift~~ | **Superseded.** Drift shipped — see §5.1. Not as a cron (there isn't one), but as a time-gated function called from paths that already poll |
+| Market-driven prices + GM events; ~~no random drift~~ | **Superseded.** Drift shipped — see §5.1. A `pg_cron` heartbeat every minute, against a function that is idempotent and time-gated so the GM keeps control of the interval |
 | GM pre-generates codes, guest claims with a name | Lets you print cards and hand fortunes to specific people |
 | Buy/sell only in v0 | `holdings.shares` is signed and `trades.side` is a free text check, so shorts need no migration |
 | CEOs are flavour + schema hooks | `companies.ceo_player_id` exists from day one; press releases deferred |
@@ -369,29 +369,52 @@ there is never a reason to sell. Event cards restore that decision in bursts;
 drift restores it continuously. A *negative* mean is the specific thing that
 makes holding cash a real choice rather than a wasted turn.
 
-### Where the cron isn't
+### The clock
 
-There is no scheduler available — Vercel Hobby allows one cron run a day,
-`pg_cron` is a paid Supabase tier. So `wex_drift()` is **idempotent and
-time-gated**: it computes how many intervals have elapsed since `last_drift_at`
-and applies exactly that many. Calling it twice in a second does nothing the
-second time, which makes it safe to call from anywhere — and it is called from
-the two things already polling all party:
+**`pg_cron`, every minute.** It is free on Supabase — enable it under Database →
+Extensions and [supabase/drift.sql](supabase/drift.sql) schedules the job.
+
+> Earlier drafts of this plan asserted no scheduler was available and designed
+> around it. That was wrong: `pg_cron` is not a paid tier. The design survived
+> the correction unchanged, because the thing that made it work without a
+> scheduler — being idempotent and time-gated — is also what lets a fixed
+> one-minute heartbeat serve a GM-adjustable interval.
+
+The job is **dumb on purpose**: `select wex_drift();`, unconditionally, forever.
+Every condition lives in the function, which returns immediately unless drift is
+enabled, the market is open, and a full interval has elapsed. So the weather
+switch in the GM panel governs everything and the schedule is never touched. A
+one-minute heartbeat against a five-minute interval means four calls in five
+return `'not yet'` after a single cheap SELECT — no lock taken.
+
+Because it is idempotent, the same function is *also* called from the two things
+already polling all party, as insurance for the night cron stops:
 
 | Caller | Covers |
 |---|---|
+| `pg_cron` | **the real clock** — runs with every screen shut |
 | `/api/wexgm` `overview` | the GM panel, open on your laptop all night |
 | `/api/wex` `portfolio` | any guest phone with the trade screen open |
 
-Both hold the service-role key. **Not granted to anon** — it writes prices, and
-anon never gets a write path however well guarded. **Not called from
+Both API paths hold the service-role key. **Not granted to anon** — it writes
+prices, and anon never gets a write path however well guarded. **Not called from
 `execute_trade`** either: that is the one concurrency-critical function in the
 project and drift would make every trade contend on the `market_state` row, for
-a few seconds of freshness the GM poll already provides.
+a few seconds of freshness the heartbeat already provides.
 
-The cheap path takes no lock at all — an unlocked read returns early on all but
-one call per interval, so this runs on every poll without funnelling the
-exchange through one row.
+### The thing a real scheduler changes
+
+Drift used to stop on its own when the last screen closed. **It no longer does.**
+Leave the exchange open overnight with the weather on and you return to several
+hundred intervals of drift and a market nobody recognises.
+
+`wex_drift()` checks `is_open`, so the fix is entirely procedural: **ring the
+closing bell.** Worth putting in the run-of-show, and a good reason to close the
+market between the dry run and the party rather than leaving it up.
+
+The 5-interval catch-up cap was insurance against a poll-driven system putting a
+cliff on the chart after a quiet stretch. With a real clock it should never fire
+— if it does, cron has stopped and that is worth knowing.
 
 ### The trap: these numbers compound
 
@@ -898,12 +921,12 @@ hero figures in the same sans as everything else, at display size.
   page-open pays for history. At ~400KB per open, a few hundred opens across a
   party is well inside the egress budget.
 
-  **If it ever is worth building, two notes.** First, don't reach for a cron —
-  there isn't one (Vercel Hobby allows one run a day; `pg_cron` is a paid
-  Supabase tier). An `after insert` trigger on `price_ticks` that upserts
-  `(company_id, date_trunc('5 min', created_at))` keeps the rollup permanently
-  current with no scheduler at all, and `wex_reset_market` just clears it
-  alongside `price_ticks`. Second, make it **additive**: raw ticks stay, the
+  **If it ever is worth building, two notes.** First, there are two ways to keep
+  it current and the trigger is still the better one: an `after insert` trigger
+  on `price_ticks` upserting `(company_id, date_trunc('5 min', created_at))` is
+  always exactly up to date, where a `pg_cron` job — now that we know pg_cron is
+  free on Supabase, see §5.1 — leaves a window where the rollup lags the raw
+  ticks. Second, make it **additive**: raw ticks stay, the
   rollup is a second read path for wide windows only. `price_ticks` is the only
   record of what actually happened, and rounding it in place destroys the
   ledger to save bytes that are not scarce.

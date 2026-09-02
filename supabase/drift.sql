@@ -17,15 +17,18 @@
 --   in: positions gain and lose on their own, so holding is a decision rather
 --   than the absence of one.
 --
--- HOW IT IS DRIVEN — read this before wondering where the cron is
---   There isn't one. Vercel Hobby allows one cron run a day and `pg_cron` is a
---   paid Supabase tier, so a scheduler was never available.
+-- HOW IT IS DRIVEN
+--   `pg_cron` fires it every minute (section 3 below). That is the real clock,
+--   and it is free on Supabase — enable the extension under Database →
+--   Extensions and this file schedules the rest.
 --
---   Instead this function is IDEMPOTENT AND TIME-GATED: it works out how many
+--   The function is also IDEMPOTENT AND TIME-GATED: it works out how many
 --   intervals have elapsed since `last_drift_at` and applies exactly that many,
---   so calling it twice in a second does nothing the second time. That makes it
---   safe to call from anything, and it is called from the two paths that are
---   already polling during a party:
+--   so calling it twice in a second does nothing the second time. That is what
+--   lets a one-minute heartbeat serve any `drift_interval_seconds` — four calls
+--   in five return "not yet" after a single cheap SELECT — and it is why the
+--   same function can safely be called from the two paths already polling
+--   during a party, as belt and braces for the night cron stops:
 --
 --     /api/wexgm  "overview"   — the GM panel, open on your laptop all night
 --     /api/wex    "portfolio"  — any guest phone with the trade screen open
@@ -38,7 +41,15 @@
 --   trade prices against a perfectly current market, but execute_trade is the
 --   one piece of concurrency-critical SQL in the project and drift would make
 --   every trade contend on the market_state row. Not worth re-testing that for
---   a few seconds of freshness the GM panel's poll already provides.
+--   a few seconds of freshness the heartbeat already provides.
+--
+-- ⚠ ONE THING TO REMEMBER AT THE END OF THE NIGHT
+--   A real scheduler runs whether or not anyone is in the room. Drift used to
+--   stop by itself when the last screen closed; it no longer does. Leave the
+--   exchange OPEN overnight with the weather on and you will come back to
+--   several hundred intervals of drift and an unrecognisable market.
+--   `wex_drift()` checks `is_open`, so the fix is simply to ring the closing
+--   bell — GM → Exchange → Close the exchange.
 -- ============================================================================
 
 
@@ -186,8 +197,52 @@ grant execute on function wex_drift(boolean) to service_role;
 
 
 -- ============================================================================
--- 3. Verify
+-- 3. The heartbeat
 -- ============================================================================
+-- Every minute, unconditionally. The JOB is dumb on purpose — all the
+-- conditions live in wex_drift() itself, which returns immediately unless
+-- `drift_enabled` and `is_open` are both true and a full interval has elapsed.
+-- So the weather switch in the GM panel governs everything, and the schedule
+-- never needs touching.
+--
+-- Why every minute rather than every five: the interval is a GM dial that can
+-- change mid-party. A heartbeat faster than the shortest interval anyone would
+-- set means the schedule stays correct whatever they pick, at a cost of one
+-- cheap SELECT per minute. (Note the corollary — an interval set BELOW 60s
+-- would batch into a single catch-up. All five GM presets are 120s or slower.)
+--
+-- Wrapped in a guard so this file still runs on a project where pg_cron has not
+-- been enabled: without it the whole script would fail at the last statement,
+-- after having already done the useful work.
+--
+-- cron.schedule() upserts by job name, so re-running this file re-points the
+-- existing job rather than stacking up duplicates.
+
+do $$
+begin
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.schedule('wex-drift', '* * * * *', 'select wex_drift();');
+    raise notice 'wex-drift scheduled: every minute.';
+  else
+    raise notice 'pg_cron is not enabled — skipping the heartbeat. Drift will only advance when the GM panel or a guest phone polls. Enable it under Database → Extensions and re-run this file.';
+  end if;
+end;
+$$;
+
+
+-- ============================================================================
+-- 4. Verify
+-- ============================================================================
+-- The heartbeat:
+--   select jobid, jobname, schedule, command, active from cron.job;
+--   select status, return_message, start_time
+--     from cron.job_run_details order by start_time desc limit 10;
+--
+-- To stop it (the GM weather switch is the normal off-switch; this is for
+-- taking the schedule out entirely):
+--   select cron.unschedule('wex-drift');
+--
+-- The function:
 --   select * from market_state;                 -- the four new dials
 --   select wex_drift();                         -- {"applied": 0, ...} while off
 --   update market_state set drift_enabled = true, is_open = true where id = 1;

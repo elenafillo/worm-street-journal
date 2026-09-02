@@ -72,10 +72,11 @@ export default async function handler(req, res) {
       // Read
       // ------------------------------------------------------------------
       case "overview": {
-        // One of the two things that drive price drift — see supabase/drift.sql
-        // for why there is no cron. Time-gated and idempotent, so this is a
-        // no-op on all but one poll per interval, and it runs BEFORE the reads
-        // so the panel shows the prices it just caused.
+        // Belt and braces for price drift — a pg_cron heartbeat is the real
+        // clock (see supabase/drift.sql), this covers the night it stops.
+        // Time-gated and idempotent, so a no-op on all but one poll per
+        // interval, and it runs BEFORE the reads so the panel shows any prices
+        // it just caused rather than lagging a poll behind them.
         await rpc("wex_drift", {});
 
         const [companies, state, board, events] = await Promise.all([
