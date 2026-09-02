@@ -40,10 +40,20 @@ export const dashStyles = `
     font-size: 11px; text-transform: uppercase; letter-spacing: 3px;
     color: var(--muted); margin-top: 6px;
   }
+  .wexd-masthead-right {
+    display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+  }
   .wexd-stamp {
     font-size: 12px; font-weight: 700; letter-spacing: 2px;
     text-transform: uppercase; padding: 6px 12px; white-space: nowrap;
   }
+  .wexd-how-btn {
+    background: none; border: 1px solid var(--rule); cursor: pointer;
+    font-family: inherit; font-size: 11px; letter-spacing: 1px;
+    padding: 8px 12px; min-height: 40px; color: var(--muted);
+    white-space: nowrap;
+  }
+  .wexd-how-btn:hover { background: var(--paper-dark); color: var(--ink); }
   .wexd-stamp.open { color: var(--wex-up); background: var(--wex-up-bg); }
   .wexd-stamp.closed { color: var(--red); background: var(--wex-down-bg); }
 

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { wex, storedCode, rememberCode, forgetCode } from "./wexApi.js";
 import { usePrices } from "./useMarketData.js";
+import { HowToTrade } from "./HowItWorks.jsx";
 import {
   formatWormcoin, formatPct, pctChange, previewTrade, maxAffordableShares, WORMCOIN,
 } from "./format.js";
@@ -141,6 +142,16 @@ function Gate({ onIn }) {
       </div>
 
       {error && <div className="wex-error">{error}</div>}
+
+      {/* Only before the name prompt. Someone who has already typed their words
+          is one tap from being in — do not put a wall of text in front of them. */}
+      {!needsName && (
+        <div className="wex-how">
+          <div className="wex-how-heading">How to trade</div>
+          <HowToTrade limit={3} />
+          <div className="wex-gate-hint">The rest is on the exchange floor.</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -454,6 +465,13 @@ export default function WexTrade() {
           busy={busy}
         />
       ))}
+
+      {/* Folded shut by default. The desk is for trading; this is for the
+          moment someone wonders why a round trip cost them money. */}
+      <details className="wex-how wex-how-details">
+        <summary className="wex-how-heading">How to trade</summary>
+        <HowToTrade />
+      </details>
 
       <div className="wex-foot">
         <span>Prices move when worms trade</span>

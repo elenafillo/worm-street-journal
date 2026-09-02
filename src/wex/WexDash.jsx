@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { useMarketData } from "./useMarketData.js";
 import PriceChart from "./PriceChart.jsx";
 import { colorOf } from "./palette.js";
+import { HowWexWorks } from "./HowItWorks.jsx";
 import { formatWormcoin, formatPct, pctChange, WORMCOIN } from "./format.js";
 
 // ============================================================
@@ -42,6 +43,7 @@ export default function WexDash() {
     return WINDOWS.some((x) => x.id === w) ? w : "1h";
   });
   const [yMode, setYMode] = useState(() => (params.get("y") === "abs" ? "abs" : "pct"));
+  const [explainer, setExplainer] = useState(false);
 
   // `?only=ANL,MLC` pre-sets the projector to a couple of stocks without
   // anyone having to touch the laptop mid-crash.
@@ -113,10 +115,17 @@ export default function WexDash() {
           <h1 className="wexd-title">Worm Stock Exchange</h1>
           <div className="wexd-sub">Wormhill · live from the floor</div>
         </div>
-        <div className={`wexd-stamp ${market.is_open ? "open" : "closed"}`}>
-          {market.is_open ? "● Open" : "● Closed"}
+        <div className="wexd-masthead-right">
+          <div className={`wexd-stamp ${market.is_open ? "open" : "closed"}`}>
+            {market.is_open ? "● Open" : "● Closed"}
+          </div>
+          <button className="wexd-how-btn" onClick={() => setExplainer(true)}>
+            How does WEX even work?
+          </button>
         </div>
       </header>
+
+      <HowWexWorks open={explainer} onClose={() => setExplainer(false)} />
 
       {error && <div className="wexd-error">{error} — showing the last figures received.</div>}
 

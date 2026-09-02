@@ -184,6 +184,75 @@ export const wexStyles = `
     text-transform: uppercase; color: var(--muted); text-decoration: underline;
   }
 
+  /* ---------------- How it works ----------------
+     Shared by the gate, the trade desk and the dashboard dialog, so the three
+     explanations cannot drift apart visually any more than they can textually. */
+  .wex-how {
+    margin-top: 28px; padding-top: 16px;
+    border-top: 1px solid var(--rule);
+    text-align: left;
+  }
+  .wex-how-heading {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 3px;
+    color: var(--muted); margin-bottom: 10px;
+  }
+  .wex-how-list {
+    margin: 0; padding-left: 20px;
+    font-size: 13px; line-height: 1.65; color: var(--muted);
+  }
+  .wex-how-list li { margin-bottom: 9px; }
+  .wex-how-list strong { color: var(--ink); font-weight: 700; }
+
+  /* The desk version is folded shut — the desk is for trading. */
+  .wex-how-details > summary {
+    cursor: pointer; list-style: none;
+    display: flex; align-items: center; gap: 8px;
+    min-height: 40px;              /* a real tap target, not just the words */
+  }
+  .wex-how-details > summary::-webkit-details-marker { display: none; }
+  .wex-how-details > summary::after { content: "＋"; font-size: 14px; }
+  .wex-how-details[open] > summary::after { content: "－"; }
+
+  /* ---------------- The dashboard explainer ---------------- */
+  .wex-how-dialog {
+    width: min(640px, calc(100vw - 32px));
+    max-height: min(80vh, 760px);
+    overflow-y: auto;
+    padding: 22px 24px 26px;
+    background: var(--paper); color: var(--ink);
+    border: 1px solid var(--rule); border-top: 6px solid var(--ink);
+  }
+  .wex-how-dialog::backdrop { background: rgba(20, 17, 12, 0.55); }
+  .wex-how-head {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 16px; margin-bottom: 6px;
+  }
+  .wex-how-title {
+    font-family: 'Barlow Condensed', 'Playfair Display', serif;
+    font-size: 28px; font-weight: 900; line-height: 1.05;
+    text-transform: uppercase; letter-spacing: 1px; margin: 0;
+  }
+  .wex-how-close {
+    flex: 0 0 40px; width: 40px; height: 40px;
+    font-size: 26px; line-height: 1; cursor: pointer;
+    background: none; border: 1px solid var(--rule); color: var(--muted);
+    font-family: inherit;
+  }
+  .wex-how-close:hover { background: var(--paper-dark); color: var(--ink); }
+  .wex-how-section {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 3px;
+    color: var(--muted); margin: 20px 0 10px;
+    border-bottom: 1px solid var(--rule); padding-bottom: 5px;
+  }
+  .wex-how-defs { margin: 0; font-size: 13px; line-height: 1.6; }
+  .wex-how-defs > div { margin-bottom: 9px; }
+  .wex-how-defs dt { font-weight: 700; }
+  .wex-how-defs dd { margin: 0; color: var(--muted); }
+  .wex-how-foot {
+    margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--rule);
+    font-size: 12px; line-height: 1.6; color: var(--muted);
+  }
+
   /* ---------------- GM: the two desks ---------------- */
   /* A hard split, not a tab row. The newsroom hides articles; the exchange
      crashes the economy. They should not be one mis-tap apart. */
