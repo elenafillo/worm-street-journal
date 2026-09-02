@@ -131,7 +131,11 @@ export const wexStyles = `
   .wex-qty-btn:active { background: var(--paper-darker); }
   .wex-qty-btn:disabled { opacity: 0.4; cursor: default; }
   .wex-qty-val {
-    flex: 1; text-align: center; padding: 14px 8px;
+    /* min-width:0 is load-bearing. A flex item's default min-width:auto is the
+       content-based minimum, and for type="number" that is the browser's own
+       ~20-character field width — wide enough that the + button was pushed off
+       a phone screen however small the flex-basis. */
+    flex: 1; min-width: 0; text-align: center; padding: 14px 8px;
     font-size: 22px; font-weight: 700; font-family: inherit;
     background: var(--paper-dark); border: 1px solid var(--rule);
     color: var(--ink); -webkit-appearance: none;
