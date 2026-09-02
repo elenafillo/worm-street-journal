@@ -1,0 +1,544 @@
+import { useState, useEffect, useCallback } from "react";
+import { formatWormcoin, formatPct, pctChange } from "./format.js";
+import { SERIES_COLORS } from "./palette.js";
+
+// The Worm Fed's exchange controls. Rendered inside the existing GM panel,
+// behind the same password — but on its own screen, never interleaved with the
+// newsroom. Moving money and moderating articles should not share a tab row.
+
+async function gm(password, action, params = {}) {
+  const res = await fetch("/api/wexgm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password, action, ...params }),
+  });
+  let data;
+  try { data = await res.json(); } catch { data = { error: "Unreadable reply." }; }
+  return { status: res.status, data };
+}
+
+// ============================================================
+// Exchange — the controls you actually use during the party
+// ============================================================
+function ExchangeTab({ password, overview, reload, say }) {
+  const [headline, setHeadline] = useState("");
+  const [pct, setPct] = useState("-10");
+  const [target, setTarget] = useState("");        // "" = market-wide
+  const [broadcast, setBroadcast] = useState(true);
+  const [marker, setMarker] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const market = overview?.market || {};
+  const companies = overview?.companies || [];
+
+  async function act(action, params, confirmText) {
+    if (confirmText && !confirm(confirmText)) return;
+    setBusy(true);
+    const { data } = await gm(password, action, params);
+    setBusy(false);
+    say(data?.ok === false ? data.error : data?.note || "Done.", data?.ok !== false);
+    reload();
+  }
+
+  async function fire() {
+    if (!headline.trim()) { say("An event needs a headline.", false); return; }
+    await act("fire_event", {
+      company_id: target || null,
+      headline: headline.trim(),
+      pct_change: Number(pct),
+      broadcast_wsj: broadcast,
+    });
+    setHeadline("");
+  }
+
+  async function mark() {
+    if (!marker.trim()) { say("A marker needs something to say.", false); return; }
+    await act("add_marker", { headline: marker.trim(), company_id: target || null });
+    setMarker("");
+  }
+
+  return (
+    <>
+      <div className="gm-section-title">The Bell</div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+        <button
+          className="gm-btn"
+          style={{ background: market.is_open ? "var(--paper-darker)" : "var(--wex-up)", color: market.is_open ? "var(--ink)" : "var(--paper)" }}
+          disabled={busy || market.is_open}
+          onClick={() => act("open_market", {})}
+        >
+          Open the exchange
+        </button>
+        <button
+          className="gm-btn hide"
+          disabled={busy || !market.is_open}
+          onClick={() => act("close_market", {})}
+        >
+          Close the exchange
+        </button>
+        <button className="gm-btn" disabled={busy} onClick={() => act("halt", { halted: true })}>
+          Halt all trading
+        </button>
+        <button className="gm-btn" disabled={busy} onClick={() => act("halt", { halted: false })}>
+          Resume all
+        </button>
+      </div>
+      <div className="wex-admin-state">
+        {market.is_open
+          ? "OPEN — worms are trading."
+          : "CLOSED — no trades will go through."}
+      </div>
+
+      <div className="gm-section-title">Fire an Event</div>
+      <input
+        className="form-input"
+        placeholder="DIRT SCANDAL AT ANNELID CORP"
+        value={headline}
+        onChange={(e) => setHeadline(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && !busy && fire()}
+        style={{ marginBottom: 8 }}
+      />
+      <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+        <select className="form-input" style={{ flex: "2 1 180px" }} value={target} onChange={(e) => setTarget(e.target.value)}>
+          <option value="">Whole economy</option>
+          {companies.map((c) => (
+            <option key={c.id} value={c.id}>{c.ticker} — {c.name}</option>
+          ))}
+        </select>
+        <input
+          className="form-input"
+          style={{ flex: "1 1 90px" }}
+          type="number"
+          value={pct}
+          onChange={(e) => setPct(e.target.value)}
+          placeholder="%"
+        />
+      </div>
+      <label className="wex-admin-check">
+        <input type="checkbox" checked={broadcast} onChange={(e) => setBroadcast(e.target.checked)} />
+        Also broadcast on the WSJ ticker
+      </label>
+      <button className="submit-btn" disabled={busy} onClick={fire} style={{ marginTop: 8 }}>
+        {busy ? "…" : `Fire ${pct}% event`}
+      </button>
+      <div className="wex-admin-hint">
+        Quick hits: {[-25, -10, -5, 5, 10, 25].map((p) => (
+          <button key={p} className="wex-link" style={{ marginRight: 10 }} onClick={() => setPct(String(p))}>
+            {p > 0 ? `+${p}` : p}%
+          </button>
+        ))}
+      </div>
+
+      <div className="gm-section-title">Mark the Timeline</div>
+      <div className="wex-admin-hint" style={{ marginBottom: 8 }}>
+        A vertical line on the dashboard chart, with no price consequence. For the
+        things that explain a jump without having caused it — the band starting,
+        someone arriving, a rumour going round the kitchen. Uses the company
+        selector above; leave it on "Whole economy" for a market-wide note.
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <input
+          className="form-input"
+          style={{ flex: "2 1 220px" }}
+          placeholder="The band starts"
+          value={marker}
+          onChange={(e) => setMarker(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && !busy && mark()}
+        />
+        <button className="gm-btn" disabled={busy} onClick={mark}>
+          Add marker
+        </button>
+      </div>
+
+      <div className="gm-section-title">The Board</div>
+      {companies.map((c) => (
+        <CompanyControl key={c.id} c={c} password={password} busy={busy} act={act} />
+      ))}
+
+      <div className="gm-section-title">Recent Events &amp; Markers</div>
+      {(overview?.events || []).length === 0 && <div className="wex-admin-hint">Nothing fired yet.</div>}
+      {(overview?.events || []).map((e) => (
+        <div key={e.id} className="wex-admin-event">
+          <strong>{e.headline}</strong>
+          {Number(e.pct_change) === 0
+            ? " · marker"
+            : ` · ${e.pct_change > 0 ? "+" : ""}${e.pct_change}%`}
+          {!e.company_id && " · market-wide"}
+          <button
+            className="wex-link"
+            style={{ marginLeft: 10 }}
+            disabled={busy}
+            onClick={() => act("delete_event", { id: e.id },
+              `Remove "${e.headline}" from the timeline?\n\nPrices already moved and will NOT be put back.`)}
+          >
+            remove
+          </button>
+        </div>
+      ))}
+
+      <div className="gm-section-title">Start Again</div>
+      <div className="wex-admin-hint" style={{ marginBottom: 8 }}>
+        Neither touches the roster — codes and starting fortunes survive, so printed cards stay valid.
+      </div>
+      <button
+        className="gm-btn hide"
+        disabled={busy}
+        onClick={() => act("reset_market", {},
+          "Wipe all trades, holdings and prices?\n\nPlayers KEEP their names and stay logged in.")}
+      >
+        Reset market (keep names)
+      </button>
+      <button
+        className="gm-btn delete"
+        disabled={busy}
+        onClick={() => act("reset_all", {},
+          "Full reset.\n\nAll trades wiped AND every account unclaimed — everyone is logged out and must enter their words again.\n\nUse this before a NEW group plays.")}
+      >
+        Reset everything (log everyone out)
+      </button>
+    </>
+  );
+}
+
+function CompanyControl({ c, busy, act }) {
+  const [price, setPrice] = useState("");
+  const change = pctChange(c.price, c.open_price);
+  return (
+    <div className="gm-article">
+      <div className="gm-article-headline">
+        {c.ticker} — {c.name} {c.is_halted && "· HALTED"}
+      </div>
+      <div className="gm-article-meta">
+        {formatWormcoin(c.price, { symbol: true })} · {formatPct(change)} since open
+        {c.ceo_name && ` · led by ${c.ceo_name}`}
+      </div>
+      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+        <button className="gm-btn" disabled={busy}
+          onClick={() => act("halt", { company_id: c.id, halted: !c.is_halted })}>
+          {c.is_halted ? "Resume" : "Halt"}
+        </button>
+        <input
+          className="form-input"
+          style={{ width: 130, padding: "6px 8px" }}
+          placeholder="set price"
+          value={price}
+          onChange={(e) => setPrice(e.target.value)}
+        />
+        <button
+          className="gm-btn"
+          disabled={busy || !price}
+          onClick={() => { act("set_price", { company_id: c.id, price: Number(price) }); setPrice(""); }}
+        >
+          Set
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Companies
+// ============================================================
+function CompaniesTab({ password, overview, reload, say }) {
+  const [busy, setBusy] = useState(false);
+
+  async function save(c, fields) {
+    const payload = { ...fields };
+    // The server treats a PRESENT open_price as a deliberate rebase and slams
+    // the live price back to it. This form always holds one, so without this
+    // guard, renaming a company — or now, picking its chart colour — at 10pm
+    // would silently undo the night's trading on that stock.
+    if (Number(payload.open_price) === Number(c.open_price)) delete payload.open_price;
+
+    setBusy(true);
+    const { data } = await gm(password, "upsert_company", { id: c.id, ...payload });
+    setBusy(false);
+    say(data?.ok ? `${c.ticker} updated.` : data?.error || "Failed.", Boolean(data?.ok));
+    reload();
+  }
+
+  return (
+    <>
+      <div className="gm-section-title">The Seven</div>
+      <div className="wex-admin-hint" style={{ marginBottom: 10 }}>
+        Name each company and who fronts it. Changing the opening price resets that
+        stock&apos;s baseline — everyone&apos;s % change is measured from it — so only do that
+        before trading starts.
+      </div>
+      {(overview?.companies || []).map((c) => (
+        <CompanyEditor key={c.id} c={c} busy={busy} onSave={save} />
+      ))}
+      <button
+        className="gm-btn"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          await gm(password, "upsert_company", {
+            ticker: `NEW${Math.floor(Math.random() * 90 + 10)}`,
+            name: "New Company", open_price: 100000, liquidity: 800,
+            sort_order: (overview?.companies?.length || 0) + 1,
+          });
+          setBusy(false);
+          reload();
+        }}
+      >
+        + Add a company
+      </button>
+    </>
+  );
+}
+
+function CompanyEditor({ c, busy, onSave }) {
+  const [f, setF] = useState({
+    ticker: c.ticker, name: c.name, ceo_name: c.ceo_name || "",
+    blurb: c.blurb || "", liquidity: c.liquidity, open_price: c.open_price,
+    color: c.color || "",
+  });
+  const dirty = ["ticker", "name", "ceo_name", "blurb", "liquidity", "color"].some(
+    (k) => String(f[k] ?? "") !== String(c[k] ?? "")
+  ) || Number(f.open_price) !== Number(c.open_price);
+
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  return (
+    <div className="gm-article">
+      <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
+        <input className="form-input" style={{ width: 80 }} value={f.ticker} onChange={set("ticker")} placeholder="TKR" />
+        <input className="form-input" style={{ flex: "2 1 160px" }} value={f.name} onChange={set("name")} placeholder="Company name" />
+        <input className="form-input" style={{ flex: "1 1 140px" }} value={f.ceo_name} onChange={set("ceo_name")} placeholder="CEO (an attendee)" />
+      </div>
+      <input className="form-input" style={{ marginBottom: 6 }} value={f.blurb} onChange={set("blurb")} placeholder="One line of flavour" />
+
+      {/* Seven fixed swatches, not a free colour picker. The palette is
+          validated as a SET — a hand-picked teal would quietly break the
+          colour-vision separation the seven were chosen for. */}
+      <div className="wex-admin-mini" style={{ marginBottom: 8 }}>
+        chart colour
+        <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+          {SERIES_COLORS.map((hex) => (
+            <button
+              key={hex}
+              type="button"
+              aria-label={hex}
+              onClick={() => setF({ ...f, color: hex })}
+              style={{
+                width: 26, height: 26, background: hex, cursor: "pointer",
+                border: f.color === hex ? "3px solid var(--ink)" : "1px solid var(--rule)",
+              }}
+            />
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+        <label className="wex-admin-mini">
+          liquidity
+          <input className="form-input" style={{ width: 90 }} value={f.liquidity} onChange={set("liquidity")} />
+        </label>
+        <label className="wex-admin-mini">
+          opening price
+          <input className="form-input" style={{ width: 120 }} value={f.open_price} onChange={set("open_price")} />
+        </label>
+        <button className="gm-btn headline-on" disabled={busy || !dirty} onClick={() => onSave(c, f)}>
+          {dirty ? "Save" : "Saved"}
+        </button>
+      </div>
+      <div className="wex-admin-hint">
+        Lower liquidity = trades move this stock more. 800 is the default.
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Players
+// ============================================================
+function PlayersTab({ password, say }) {
+  const [players, setPlayers] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [filter, setFilter] = useState("");
+
+  const load = useCallback(async () => {
+    const { data } = await gm(password, "list_players");
+    if (Array.isArray(data)) setPlayers(data);
+  }, [password]);
+
+  // The async IIFE keeps the state update out of the effect body, and the
+  // flag stops a slow reply landing after the tab has been switched away.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await gm(password, "list_players");
+      if (!cancelled && Array.isArray(data)) setPlayers(data);
+    })();
+    return () => { cancelled = true; };
+  }, [password]);
+
+  async function act(action, params, confirmText) {
+    if (confirmText && !confirm(confirmText)) return;
+    setBusy(true);
+    const { data } = await gm(password, action, params);
+    setBusy(false);
+    if (data?.code) say(`New code: ${data.code}`, true);
+    load();
+  }
+
+  function copyRoster() {
+    const csv = ["code,name,starting_cash,cash,net_worth,claimed"]
+      .concat(players.map((p) =>
+        [p.code, p.display_name || "", p.starting_cash, p.cash, p.net_worth, p.is_claimed].join(",")))
+      .join("\n");
+    navigator.clipboard?.writeText(csv).then(
+      () => say("Roster copied as CSV — paste into a mail merge for the cards.", true),
+      () => say("Could not reach the clipboard.", false)
+    );
+  }
+
+  const shown = filter
+    ? players.filter((p) =>
+        p.code.includes(filter.toLowerCase()) ||
+        (p.display_name || "").toLowerCase().includes(filter.toLowerCase()))
+    : players;
+
+  const claimed = players.filter((p) => p.is_claimed).length;
+
+  return (
+    <>
+      <div className="gm-section-title">
+        Players — {claimed} of {players.length} claimed
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+        <input
+          className="form-input"
+          style={{ flex: "1 1 160px" }}
+          placeholder="Search a code or name…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+        <button className="gm-btn" disabled={busy} onClick={() => act("add_player", { cash: 1500000 })}>
+          + Add player
+        </button>
+        <button className="gm-btn" onClick={copyRoster}>Copy roster CSV</button>
+      </div>
+      <div className="wex-admin-hint" style={{ marginBottom: 10 }}>
+        This is the only screen that shows codes — it is how you look up a guest
+        stuck at the door. Keep it off the projector.
+      </div>
+
+      {shown.map((p) => (
+        <PlayerRow key={p.id} p={p} busy={busy} act={act} />
+      ))}
+      {shown.length === 0 && <div className="wex-admin-hint">No worms match that.</div>}
+    </>
+  );
+}
+
+function PlayerRow({ p, busy, act }) {
+  const [cash, setCash] = useState("");
+  return (
+    <div className="gm-article">
+      <div className="gm-article-headline">
+        {p.display_name || <em style={{ opacity: 0.6 }}>unclaimed</em>}
+      </div>
+      <div className="gm-article-meta" style={{ letterSpacing: 1 }}>
+        {p.code}
+      </div>
+      <div className="gm-article-meta">
+        {formatWormcoin(p.net_worth, { symbol: true })} net ·
+        {" "}{formatWormcoin(p.cash, { symbol: true })} cash ·
+        {" "}started {formatWormcoin(p.starting_cash, { symbol: true })} ·
+        {" "}{formatPct(p.pct_return)}
+      </div>
+      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+        <input
+          className="form-input"
+          style={{ width: 130, padding: "6px 8px" }}
+          placeholder="set cash"
+          value={cash}
+          onChange={(e) => setCash(e.target.value)}
+        />
+        <button className="gm-btn" disabled={busy || !cash}
+          onClick={() => { act("set_cash", { id: p.id, cash: Number(cash) }); setCash(""); }}>
+          Set
+        </button>
+        <button className="gm-btn" disabled={busy}
+          onClick={() => act("regenerate_code", { id: p.id }, "Give this worm a new code? The old one stops working.")}>
+          New code
+        </button>
+        {p.is_claimed && (
+          <button className="gm-btn hide" disabled={busy}
+            onClick={() => act("unclaim_player", { id: p.id }, `Log ${p.display_name} out and free the code?`)}>
+            Unclaim
+          </button>
+        )}
+        <button className="gm-btn delete" disabled={busy}
+          onClick={() => act("delete_player", { id: p.id }, "Delete this player and all their trades permanently?")}>
+          Delete
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Shell
+// ============================================================
+export default function WexAdmin({ password }) {
+  const [tab, setTab] = useState("exchange");
+  const [overview, setOverview] = useState(null);
+  const [msg, setMsg] = useState(null);
+
+  const reload = useCallback(async () => {
+    const { data } = await gm(password, "overview");
+    if (data?.companies) setOverview(data);
+  }, [password]);
+
+  // See the note in PlayersTab — same reason for the IIFE and the flag.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await gm(password, "overview");
+      if (!cancelled && data?.companies) setOverview(data);
+    })();
+    return () => { cancelled = true; };
+  }, [password]);
+
+  // Keep the board fresh while it sits open on your laptop during the party.
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible") reload();
+    }, 5000);
+    return () => clearInterval(id);
+  }, [reload]);
+
+  const say = useCallback((text, good = true) => {
+    setMsg({ text, good });
+    setTimeout(() => setMsg(null), 6000);
+  }, []);
+
+  return (
+    <div>
+      <div className="wex-admin-tabs">
+        {[["exchange", "Exchange"], ["companies", "Companies"], ["players", "Players"]].map(([id, label]) => (
+          <button
+            key={id}
+            className={`wex-admin-tab ${tab === id ? "active" : ""}`}
+            onClick={() => setTab(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {msg && <div className={`wex-toast ${msg.good ? "good" : "bad"}`}>{msg.text}</div>}
+
+      {tab === "exchange" && (
+        <ExchangeTab password={password} overview={overview} reload={reload} say={say} />
+      )}
+      {tab === "companies" && (
+        <CompaniesTab password={password} overview={overview} reload={reload} say={say} />
+      )}
+      {tab === "players" && <PlayersTab password={password} say={say} />}
+    </div>
+  );
+}

@@ -1,23 +1,14 @@
-import dotenv from "dotenv";
-dotenv.config({ path: ".env.local" });
+import { SUPABASE_URL, serviceHeaders, jsonBody } from "./_supabase.js";
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const GM_PASSWORD = process.env.GM_PASSWORD;
-
-function serviceHeaders() {
-  return {
-    apikey: SUPABASE_SERVICE_ROLE_KEY,
-    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-    "Content-Type": "application/json",
-    Prefer: "return=representation",
-  };
-}
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
-  const { password, action, ...params } = req.body;
+  const body = jsonBody(req);
+  if (!body) return res.status(400).json({ error: "Malformed request." });
+
+  const { password, action, ...params } = body;
 
   if (!password || password !== GM_PASSWORD) {
     return res.status(403).json({ error: "Wrong password, worm." });

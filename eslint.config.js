@@ -18,4 +18,12 @@ export default defineConfig([
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
   },
+  {
+    // Serverless functions and setup scripts run in Node, not the browser —
+    // without this, every process.env reference is a no-undef error.
+    files: ['api/**/*.js', 'scripts/**/*.{js,mjs}'],
+    languageOptions: {
+      globals: globals.node,
+    },
+  },
 ])

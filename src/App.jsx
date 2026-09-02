@@ -1,85 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 
-// ============================================================
-// CONFIG — paste your Supabase credentials here
-// ============================================================
-const SUPABASE_URL = "https://bliocisgoedlybzlfytk.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJsaW9jaXNnb2VkbHliemxmeXRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg3MTQ5MzUsImV4cCI6MjA5NDI5MDkzNX0.u3BZQrm6lWSPPd4gvyZOK9koOispIhYLnjqevtj5fCA";
-const DISPLAY_STYLE = "modern"; // "classic" | "modern"
-const PARTY_THURSDAY = "2026-11-26"; // ISO date of the party's Thursday — update each event
-const BREAKING_DURATION_MS = 5 * 60 * 1000; // how long the breaking banner stays live
-
-// ============================================================
-// Supabase client
-// ============================================================
-function getHeaders() {
-  return {
-    apikey: SUPABASE_ANON_KEY,
-    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-    "Content-Type": "application/json",
-  };
-}
-
-const supabase = {
-  async query(table, options = {}) {
-    let url = `${SUPABASE_URL}/rest/v1/${table}`;
-    const params = new URLSearchParams();
-    if (options.select) params.append("select", options.select);
-    if (options.order) params.append("order", options.order);
-    if (params.toString()) url += `?${params}`;
-    const res = await fetch(url, { headers: getHeaders() });
-    return res.json();
-  },
-  async insert(table, data) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
-      method: "POST",
-      headers: { ...getHeaders(), Prefer: "return=representation" },
-      body: JSON.stringify(data),
-    });
-    return res.json();
-  },
-  async update(table, data, eq) {
-    let url = `${SUPABASE_URL}/rest/v1/${table}`;
-    const params = new URLSearchParams();
-    Object.entries(eq).forEach(([k, v]) => params.append(k, `eq.${v}`));
-    url += `?${params}`;
-    const res = await fetch(url, {
-      method: "PATCH",
-      headers: { ...getHeaders(), Prefer: "return=representation" },
-      body: JSON.stringify(data),
-    });
-    return res.json();
-  },
-  async delete(table, eq) {
-    let url = `${SUPABASE_URL}/rest/v1/${table}`;
-    const params = new URLSearchParams();
-    Object.entries(eq).forEach(([k, v]) => params.append(k, `eq.${v}`));
-    url += `?${params}`;
-    await fetch(url, { method: "DELETE", headers: getHeaders() });
-  },
-  async uploadImage(file) {
-    const ext = file.name.split(".").pop();
-    const filename = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-    const res = await fetch(
-      `${SUPABASE_URL}/storage/v1/object/wsj-images/${filename}`,
-      {
-        method: "POST",
-        headers: {
-          apikey: SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-          "Content-Type": file.type,
-        },
-        body: file,
-      }
-    );
-    if (!res.ok) throw new Error("Upload failed");
-    return `${SUPABASE_URL}/storage/v1/object/public/wsj-images/${filename}`;
-  },
-  subscribe(table, callback) {
-    const interval = setInterval(callback, 4000);
-    return () => clearInterval(interval);
-  },
-};
+import { supabase } from "./lib/supabase.js";
+import { DISPLAY_STYLE, PARTY_THURSDAY, BREAKING_DURATION_MS } from "./lib/config.js";
+import WexTrade from "./wex/WexTrade.jsx";
+import WexAdmin from "./wex/WexAdmin.jsx";
+import WexDash from "./wex/WexDash.jsx";
+import { wexStyles } from "./wex/wexStyles.js";
+import { dashStyles } from "./wex/dashStyles.js";
 
 // ============================================================
 // Styles
@@ -1812,6 +1739,10 @@ function SubmitForm() {
 function GMPanel() {
   const [authed, setAuthed] = useState(false);
   const [pw, setPw] = useState("");
+  // Which half of the control room you are standing in. Kept as a hard split
+  // rather than one row of tabs: moderating an article and crashing the
+  // economy should never be one mis-tap apart.
+  const [desk, setDesk] = useState("wsj");
   const [articles, setArticles] = useState([]);
   const [breakingMsg, setBreakingMsg] = useState("");
   const [activeBreaking, setActiveBreaking] = useState(null);
@@ -1935,6 +1866,25 @@ function GMPanel() {
     <div className="gm-root">
       <div className="gm-header">&#9881; Worm Fed Control Room</div>
 
+      <div className="gm-desk-switch">
+        <button
+          className={`gm-desk-btn ${desk === "wsj" ? "active" : ""}`}
+          onClick={() => setDesk("wsj")}
+        >
+          <span className="gm-desk-name">WSJ</span>
+          <span className="gm-desk-sub">The Newsroom</span>
+        </button>
+        <button
+          className={`gm-desk-btn ${desk === "wex" ? "active" : ""}`}
+          onClick={() => setDesk("wex")}
+        >
+          <span className="gm-desk-name">WEX</span>
+          <span className="gm-desk-sub">The Exchange</span>
+        </button>
+      </div>
+
+      {desk === "wex" ? <WexAdmin password={pw} /> : <>
+
       <div className="gm-section-title">Breaking News</div>
       <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
         <input
@@ -2011,6 +1961,8 @@ function GMPanel() {
           No articles yet.
         </div>
       )}
+
+      </>}
     </div>
   );
 }
@@ -2018,15 +1970,26 @@ function GMPanel() {
 // ============================================================
 // Root App with simple routing
 // ============================================================
+const ROUTES = ["broadsheet", "display", "submit", "gm", "trade", "wex"];
+const DEFAULT_ROUTE = "broadsheet";
+
+// Strip the leading "#" and anything from "?" onward, so a hash carrying query
+// params (#broadsheet?mode=random) still resolves to its route. Matching the
+// whole hash exactly used to send every parameterised link to the default.
+function routeFromHash() {
+  const name = window.location.hash.replace(/^#/, "").split("?")[0];
+  return ROUTES.includes(name) ? name : DEFAULT_ROUTE;
+}
+
 export default function App() {
-  const [route, setRoute] = useState(() => {
-    const h = window.location.hash;
-    if (h === "#submit") return "submit";
-    if (h === "#gm") return "gm";
-    if (h === "#broadsheet") return "broadsheet";
-    if (h === "#display") return "display";
-    return "broadsheet";
-  });
+  const [route, setRoute] = useState(routeFromHash);
+
+  // Without this, browser back/forward changed the URL but not the screen.
+  useEffect(() => {
+    function onHashChange() { setRoute(routeFromHash()); }
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
 
   function navigate(r) {
     window.location.hash = r;
@@ -2035,21 +1998,34 @@ export default function App() {
 
   return (
     <div data-style={DISPLAY_STYLE}>
-      <style>{styles}</style>
+      <style>{styles}{wexStyles}{dashStyles}</style>
+      {/* Five short labels, still one phone line without wrapping — roughly
+          290px of text and gaps inside a 320px viewport. The old standalone
+          "WSJ" brand is gone; it is now the broadsheet link itself.
+          WEX is the public market dashboard on the wall, TRADE is the guest's
+          own phone screen. WEX used to point at TRADE, which was always a
+          slight lie. */}
       <div className="nav">
-        <span className="nav-brand">WSJ</span>
         <span className={`nav-link ${route === "broadsheet" ? "active" : ""}`} onClick={() => navigate("broadsheet")}>
-          Broadsheet
+          WSJ
+        </span>
+        <span className={`nav-link ${route === "wex" ? "active" : ""}`} onClick={() => navigate("wex")}>
+          WEX
+        </span>
+        <span className={`nav-link ${route === "trade" ? "active" : ""}`} onClick={() => navigate("trade")}>
+          TRADE
         </span>
         <span className={`nav-link ${route === "submit" ? "active" : ""}`} onClick={() => navigate("submit")}>
-          File a Story
+          FILE
         </span>
         <span className={`nav-link ${route === "gm" ? "active" : ""}`} onClick={() => navigate("gm")}>
-          Worm Fed
+          FED
         </span>
       </div>
       {route === "display" && <DisplayScreen />}
       {route === "broadsheet" && <BroadsheetScreen />}
+      {route === "wex" && <WexDash />}
+      {route === "trade" && <WexTrade />}
       {route === "submit" && <SubmitForm />}
       {route === "gm" && <GMPanel />}
     </div>
