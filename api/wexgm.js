@@ -72,6 +72,12 @@ export default async function handler(req, res) {
       // Read
       // ------------------------------------------------------------------
       case "overview": {
+        // One of the two things that drive price drift — see supabase/drift.sql
+        // for why there is no cron. Time-gated and idempotent, so this is a
+        // no-op on all but one poll per interval, and it runs BEFORE the reads
+        // so the panel shows the prices it just caused.
+        await rpc("wex_drift", {});
+
         const [companies, state, board, events] = await Promise.all([
           rest("companies", "select=*&order=sort_order"),
           rest("market_state", "select=*&id=eq.1"),
@@ -125,6 +131,10 @@ export default async function handler(req, res) {
       case "open_market":
         await patch("market_state?id=eq.1", {
           is_open: true, opened_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+          // Restart the drift clock at the bell. Without this, a market that
+          // sat closed overnight would drift five intervals in its first second
+          // open and put a cliff on the chart before anyone had traded.
+          last_drift_at: new Date().toISOString(),
         });
         return res.status(200).json({ ok: true });
 
@@ -190,6 +200,74 @@ export default async function handler(req, res) {
         await del(`market_events?id=eq.${params.id}`);
         return res.status(200).json({ ok: true, note: "Taken off the timeline." });
       }
+
+      // The weather dials. Guardrails are deliberately tight: these numbers
+      // compound every interval on every company, so a fat finger on the spread
+      // is the one setting here that can flatten the whole economy in minutes.
+      case "set_drift": {
+        const [cur] = await rest("market_state", "select=*&id=eq.1");
+        const fields = {};
+        if (params.enabled !== undefined) fields.drift_enabled = Boolean(params.enabled);
+
+        // Merge over the current settings, because any of the three can be sent
+        // on its own and the limits below depend on all of them together.
+        const interval = params.interval_seconds !== undefined
+          ? Math.round(Number(params.interval_seconds)) : Number(cur?.drift_interval_seconds ?? 300);
+        const mean = params.mean !== undefined
+          ? Number(params.mean) : Number(cur?.drift_mean ?? 0);
+        const stddev = params.stddev !== undefined
+          ? Number(params.stddev) : Number(cur?.drift_stddev ?? 1.5);
+
+        if (!Number.isFinite(interval) || interval < 10 || interval > 3600) {
+          return res.status(400).json({ error: "Drift every 10 seconds to an hour, no further." });
+        }
+        if (!Number.isFinite(mean) || !Number.isFinite(stddev) || stddev < 0) {
+          return res.status(400).json({ error: "Those are not numbers a market can use." });
+        }
+
+        // The limits that matter are PER HOUR, not per tick, because these
+        // compound. A 10% mean sounds mild and is catastrophic every ten
+        // seconds: 360 ticks an hour takes a 100k share to about 4e64 — past
+        // what numeric(16,2) can hold, so every subsequent trade would fail
+        // with an overflow rather than anything legible. Volatility scales with
+        // the square root of time, which is why the two are checked differently.
+        const perHour = 3600 / interval;
+        const meanPerHour = Math.abs(mean) * perHour;
+        const spreadPerHour = stddev * Math.sqrt(perHour);
+
+        if (meanPerHour > 60) {
+          return res.status(400).json({
+            error: `That is ${meanPerHour.toFixed(0)}% an hour of one-way drift. Keep it under 60 —`
+                 + ` either soften the mean or slow the interval.`,
+          });
+        }
+        if (spreadPerHour > 60) {
+          return res.status(400).json({
+            error: `That spread compounds to ${spreadPerHour.toFixed(0)}% an hour. Keep it under 60 —`
+                 + ` a market that noisy stops being a market.`,
+          });
+        }
+
+        fields.drift_interval_seconds = interval;
+        fields.drift_mean = mean;
+        fields.drift_stddev = stddev;
+
+        // Switching drift ON restarts the clock, so it does not immediately
+        // catch up for however long it happened to be off.
+        if (fields.drift_enabled === true) fields.last_drift_at = new Date().toISOString();
+        fields.updated_at = new Date().toISOString();
+
+        await patch("market_state?id=eq.1", fields);
+        return res.status(200).json({
+          ok: true,
+          note: `Weather set — about ${meanPerHour.toFixed(0)}% an hour of tide,`
+              + ` ${spreadPerHour.toFixed(0)}% of chop.`,
+        });
+      }
+
+      // For the dry run: skip the timer and drift once, now.
+      case "drift_now":
+        return res.status(200).json(await rpc("wex_drift", { p_force: true }));
 
       case "set_price": {
         const result = await rpc("wex_set_price", {

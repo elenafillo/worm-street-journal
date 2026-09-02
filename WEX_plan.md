@@ -25,36 +25,30 @@ which also settles dashboard-vs-board, the nav, and the light sheet.
 | 4 | `WexTrade.jsx` + `#trade` route + nav link | ✅ built, renders clean |
 | 4.5 | Reset + GM SQL functions | ✅ installed and working |
 | 5 | `api/wexgm.js` + WEX admin (Exchange / Companies / Players) | ✅ **18/18** |
-| 6 | **The WEX dashboard** — public `#wex`: price chart, health, leaderboards, tape (§8) | 🟡 **code written, builds, chart maths tested · needs `dashboard.sql` run and a look in a browser** |
+| 6 | **The WEX dashboard** — public `#wex`: price chart, health, leaderboards, tape (§8) | ✅ `dashboard.sql` run, seen in a browser, committed |
+| 6.5 | In-game explanations (gate · trade desk · wall dialog) | ✅ built |
+| 6.6 | **Price drift** — the weather (§5.1) | 🟡 **code written and builds · needs `drift.sql` run, then a look** |
 | 7 | **The price board** — `#board`, seven enormous rows + sparklines. Optional; §8 explains why it is its own screen | ⬜ not started |
 | 8 | Dry run, tune `liquidity`, update HANDOFF.md | ⬜ not started |
 
-### Phase 6 — what is done and what is not
+### What has NOT been verified
 
-**Written and passing:** `supabase/dashboard.sql`, `src/wex/{WexDash,PriceChart,
-chartSeries,useMarketData,dashStyles,palette}.js(x)`, the `#wex` route, the
-five-label nav, GM colour swatches, GM timeline markers (`add_marker` /
-`delete_event`). `npm run build` clean; `npm run lint` clean on every new file
-(the 9 remaining errors are the pre-existing ones in `App.jsx` and the two
-untracked variants). The chart's pure maths is in `chartSeries.js` precisely so
-it can be exercised against real tick data with plain node — carry-in points,
-right-edge live price, label collision, empty companies and a zero `open_price`
-all check out against the live database.
+Two limits on this machine, worth knowing before trusting anything below as
+"tested":
 
-**Not yet verified:**
+1. **No `/api/*` route can be exercised locally.** `.env.local` here holds a
+   41-character `SUPABASE_SERVICE_ROLE_KEY`, which is not a valid JWT. Fine in
+   production, where Vercel holds the real one — but it means `add_marker`,
+   `delete_event`, `set_drift` and `drift_now` have been read and reasoned
+   about, never run.
+2. **No headless browser.** Layout and interaction are checked by eye, by you.
 
-1. **`supabase/dashboard.sql` has not been run.** Until it is, `companies.color`,
-   `market_health` and `company_stats` do not exist. The page is built to
-   survive that — colours fall back to the palette by index, and a banner names
-   the file — but the six stat tiles stay blank.
-2. **Nobody has looked at it in a browser.** No headless browser is available
-   here, so layout, reflow, the hover tooltip and the legend toggles are
-   unexercised. This is the real gap.
-3. **The GM marker endpoints are untested end to end.** `.env.local` on this
-   machine has a 41-character `SUPABASE_SERVICE_ROLE_KEY`, which is not a valid
-   JWT, so no `/api/*` route can be exercised locally. Fine in production, where
-   Vercel holds the real one — but it means `add_marker` has only been read, not
-   run.
+What *is* machine-verified: `npm run build` and `npm run lint` clean on every
+new file (the 9 remaining lint errors are pre-existing, in `App.jsx` and the two
+ignored variants), the chart's pure maths against real tick data from the live
+database, and the drift guardrails against a simulated four-hour evening. Those
+live in `chartSeries.js` and the per-hour caps in `api/wexgm.js` precisely
+because they can be exercised with plain node.
 
 Phases 0–4 alone are a playable game.
 
@@ -69,7 +63,10 @@ Paste a file, Run (Ctrl+Enter), then open a new query tab for the next one.
 3. [ ] **`supabase/dashboard.sql`** — the two aggregate views and `companies.color`. Doesn't exist yet;
    it is stage 6a, written out in [§8.1](#81-stage-6a--what-the-panel-is-allowed-to-read). Nothing on the
    dashboard can be built before it, and it is the only SQL phases 6 and 7 need between them.
-4. [ ] **Re-paste [supabase/smoke_test.sql](supabase/smoke_test.sql)** once — check 5 asserted the
+4. [ ] **`supabase/drift.sql`** — the four weather dials on `market_state` and `wex_drift()`.
+   Until it runs, the GM Weather panel will error and the two poll paths that call the RPC
+   will log a missing-function error. Drift stays off until you switch it on. See [§5.1](#51-price-drift--the-weather).
+5. [ ] **Re-paste [supabase/smoke_test.sql](supabase/smoke_test.sql)** once — check 5 asserted the
    round-trip spread was under 1,000 ⌀; it is exactly 1,080 ⌀ (`q·p·x²/2`). The test was wrong,
    not the engine. Low priority: it only replaces the stored test function.
 5. [ ] Edit the seven companies in the Table Editor — real names, tickers, CEO names, blurbs.
@@ -97,7 +94,7 @@ To change who plays or how rich they are, re-run `generate-players.mjs` and load
 
 | Decision | Why |
 |---|---|
-| Market-driven prices + GM events; no random drift | Drift can be added later as a cron writing `price_ticks` with `reason='drift'` |
+| Market-driven prices + GM events; ~~no random drift~~ | **Superseded.** Drift shipped — see §5.1. Not as a cron (there isn't one), but as a time-gated function called from paths that already poll |
 | GM pre-generates codes, guest claims with a name | Lets you print cards and hand fortunes to specific people |
 | Buy/sell only in v0 | `holdings.shares` is signed and `trades.side` is a free text check, so shorts need no migration |
 | CEOs are flavour + schema hooks | `companies.ceo_player_id` exists from day one; press releases deferred |
@@ -355,6 +352,91 @@ Starter cards:
 
 ---
 
+## 5.1 Price drift — the weather
+
+**Shipped.** [supabase/drift.sql](supabase/drift.sql), the Weather panel in the
+GM Exchange tab, and a `◈ Drifting` mark on the wall.
+
+Every `drift_interval_seconds`, each listed company is multiplied by
+`(1 + d/100)` where `d` is a normal draw (Box-Muller) with an economy-wide mean
+and standard deviation. Four dials, all in `market_state`, all set from the GM
+panel: on/off, interval, mean, spread. **Off by default** — turning the weather
+on should be a decision, not something a migration starts doing.
+
+**Why it earns its place.** §5's design note says it out loud: with buy-only
+pressure prices only go up, so once everyone is invested the ranking freezes and
+there is never a reason to sell. Event cards restore that decision in bursts;
+drift restores it continuously. A *negative* mean is the specific thing that
+makes holding cash a real choice rather than a wasted turn.
+
+### Where the cron isn't
+
+There is no scheduler available — Vercel Hobby allows one cron run a day,
+`pg_cron` is a paid Supabase tier. So `wex_drift()` is **idempotent and
+time-gated**: it computes how many intervals have elapsed since `last_drift_at`
+and applies exactly that many. Calling it twice in a second does nothing the
+second time, which makes it safe to call from anywhere — and it is called from
+the two things already polling all party:
+
+| Caller | Covers |
+|---|---|
+| `/api/wexgm` `overview` | the GM panel, open on your laptop all night |
+| `/api/wex` `portfolio` | any guest phone with the trade screen open |
+
+Both hold the service-role key. **Not granted to anon** — it writes prices, and
+anon never gets a write path however well guarded. **Not called from
+`execute_trade`** either: that is the one concurrency-critical function in the
+project and drift would make every trade contend on the `market_state` row, for
+a few seconds of freshness the GM poll already provides.
+
+The cheap path takes no lock at all — an unlocked read returns early on all but
+one call per interval, so this runs on every poll without funnelling the
+exchange through one row.
+
+### The trap: these numbers compound
+
+The first version validated mean and spread **per tick**, which is wrong and was
+caught by simulating a four-hour evening. A 10% mean sounds mild; every ten
+seconds it is 360 ticks an hour and takes a 100,000 ⌀ share to about **1e64** —
+past what `numeric(16,2)` holds, after which not just drift but *every
+subsequent trade* fails on overflow.
+
+So the limits are **per hour**, with volatility scaling as √t because that is
+how volatility accumulates:
+
+```
+|mean| × (3600/interval)        ≤ 60      -- tide
+stddev × √(3600/interval)       ≤ 60      -- chop
+```
+
+`wex_drift()` additionally carries a hard 1e12 price ceiling, because
+`market_state` is editable by hand in the Supabase table editor and the API
+guardrail is not the only way in.
+
+### The presets, over a four-hour evening
+
+Simulated from a 100,000 ⌀ open, 4,000 trials each:
+
+| Preset | Interval | Mean | σ | Median | p10 → p90 |
+|---|---|---|---|---|---|
+| Gentle swell | 5 min | 0% | 1.5% | 99k | 87k → 114k |
+| Choppy | 3 min | 0% | 4% | 94k | 59k → 145k |
+| Slow bleed | 5 min | −1% | 2% | 61k | 51k → 73k |
+| Bull run | 5 min | +1.5% | 2% | 202k | 170k → 240k |
+| Storm | 2 min | 0% | 9% | 62k | 17k → 214k |
+
+Halted companies sit the weather out — a halt that failed to hold a price still
+would look broken. Nothing drifts while the market is closed, and opening the
+market restarts the clock so an overnight closure cannot cause a catch-up cliff.
+Catch-up is capped at 5 intervals regardless.
+
+The guest-facing rule about drift is **conditional on `drift_enabled`**
+(`DRIFT_RULE` in [src/wex/rules.js](src/wex/rules.js)): it is the one rule the
+Worm Fed can switch off mid-evening, and a rule that is false is worse than one
+that is missing.
+
+---
+
 ## 6. Things to keep in mind
 
 1. **Never trust the client.** The anon key is public, so prices, cash and holdings only ever change inside `execute_trade` / `api/wexgm.js`.
@@ -366,7 +448,7 @@ Starter cards:
 6. **Tune at the party, not in code.** `min_price` and `max_impact` live in `market_state`, `liquidity` per company, `starting_cash` per player. Resist adding constants next to `PARTY_THURSDAY`.
 7. **Do a full dry run** with two browsers and the reset button. The failure to find early is the concurrency one.
 8. `src/App_old.jsx` and `src/App_broadsheet.jsx` stay untracked (one contains a hardcoded password) but are still linted by `npm run lint`. New WEX files don't touch them.
-9. **Deferred, but schema-ready:** short selling (signed `holdings.shares`, extensible `trades.side`), price drift (a cron hitting a `drift` action, writing `price_ticks` with `reason='drift'`), CEO press releases (`companies.ceo_player_id` + a future `article_type='press_release'` inserted into `articles` with `hidden=true` for GM approval, surfacing in the existing newsroom tab).
+9. **Deferred, but schema-ready:** short selling (signed `holdings.shares`, extensible `trades.side`), ~~price drift~~ (shipped — §5.1), CEO press releases (`companies.ceo_player_id` + a future `article_type='press_release'` inserted into `articles` with `hidden=true` for GM approval, surfacing in the existing newsroom tab).
 
 ---
 

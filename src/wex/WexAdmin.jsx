@@ -34,9 +34,18 @@ function ExchangeTab({ password, overview, reload, say }) {
   async function act(action, params, confirmText) {
     if (confirmText && !confirm(confirmText)) return;
     setBusy(true);
-    const { data } = await gm(password, action, params);
+    const { status, data } = await gm(password, action, params);
     setBusy(false);
-    say(data?.ok === false ? data.error : data?.note || "Done.", data?.ok !== false);
+
+    // The HTTP status has to be part of this. A 500 carries { error } with no
+    // `ok` key at all, so testing `data.ok === false` alone treated every
+    // server failure as a success and cheerfully said "Done." — which is how a
+    // missing database column looked exactly like a working save.
+    const failed = status >= 400 || data?.ok === false;
+    say(
+      failed ? (data?.error || `The exchange refused that (${status}).`) : (data?.note || "Done."),
+      !failed
+    );
     reload();
   }
 
@@ -129,6 +138,9 @@ function ExchangeTab({ password, overview, reload, say }) {
         ))}
       </div>
 
+      <div className="gm-section-title">The Weather</div>
+      <DriftControl market={market} busy={busy} act={act} />
+
       <div className="gm-section-title">Mark the Timeline</div>
       <div className="wex-admin-hint" style={{ marginBottom: 8 }}>
         A vertical line on the dashboard chart, with no price consequence. For the
@@ -196,6 +208,135 @@ function ExchangeTab({ password, overview, reload, say }) {
       >
         Reset everything (log everyone out)
       </button>
+    </>
+  );
+}
+
+/**
+ * Random drift — the market breathing on its own.
+ *
+ * Without it, buy pressure only pushes prices up, so once everyone is invested
+ * the ranking freezes and holding is never a decision. With it, positions gain
+ * and lose whether or not anyone acts.
+ *
+ * Presets rather than a bare number field because "standard deviation per
+ * interval" is not a quantity anyone has intuition for at a party. The number
+ * is still there underneath for when you do.
+ */
+function DriftControl({ market, busy, act }) {
+  const [f, setF] = useState({
+    interval_seconds: market.drift_interval_seconds ?? 300,
+    mean: market.drift_mean ?? 0,
+    stddev: market.drift_stddev ?? 1.5,
+  });
+  const on = Boolean(market.drift_enabled);
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  // market_state always carries id 1, so an empty object is "still loading"
+  // rather than "not installed" — without that distinction the warning flashes
+  // up on every page load before the first poll lands.
+  if (!market.id) return null;
+
+  // market_state always has these once the migration has run, so their absence
+  // means one thing. Say it, rather than offering controls that will silently
+  // fail to save.
+  if (!("drift_enabled" in market)) {
+    return (
+      <div className="wex-admin-state" style={{ borderLeftColor: "var(--red)" }}>
+        Not installed — run <strong>supabase/drift.sql</strong> in the Supabase SQL
+        editor, then reload this page. Nothing else is affected: prices still move
+        on trades and on events.
+      </div>
+    );
+  }
+
+  const dirty =
+    Number(f.interval_seconds) !== Number(market.drift_interval_seconds ?? 300) ||
+    Number(f.mean) !== Number(market.drift_mean ?? 0) ||
+    Number(f.stddev) !== Number(market.drift_stddev ?? 1.5);
+
+  return (
+    <>
+      <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+        <button
+          className="gm-btn"
+          style={on ? {} : { background: "var(--wex-up)", color: "var(--paper)" }}
+          disabled={busy || on}
+          onClick={() => act("set_drift", { enabled: true })}
+        >
+          Start the weather
+        </button>
+        <button className="gm-btn hide" disabled={busy || !on} onClick={() => act("set_drift", { enabled: false })}>
+          Becalm the market
+        </button>
+        <button className="gm-btn" disabled={busy || !on} onClick={() => act("drift_now", {})}>
+          Gust now
+        </button>
+      </div>
+      <div className="wex-admin-state">
+        {on
+          ? `DRIFTING — every ${Math.round((market.drift_interval_seconds ?? 300) / 60) || "<1"} min, `
+            + `${market.drift_mean > 0 ? "+" : ""}${market.drift_mean ?? 0}% ± ${market.drift_stddev ?? 0}%`
+          : "BECALMED — prices move only when worms trade or the Fed intervenes."}
+      </div>
+
+      <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flexWrap: "wrap", marginTop: 8 }}>
+        <label className="wex-admin-mini">
+          every (seconds)
+          <input className="form-input" style={{ width: 90 }} value={f.interval_seconds} onChange={set("interval_seconds")} />
+        </label>
+        <label className="wex-admin-mini">
+          drift % (mean)
+          <input className="form-input" style={{ width: 90 }} value={f.mean} onChange={set("mean")} />
+        </label>
+        <label className="wex-admin-mini">
+          spread % (σ)
+          <input className="form-input" style={{ width: 90 }} value={f.stddev} onChange={set("stddev")} />
+        </label>
+        <button
+          className="gm-btn headline-on"
+          disabled={busy || !dirty}
+          onClick={() => act("set_drift", {
+            interval_seconds: Number(f.interval_seconds),
+            mean: Number(f.mean),
+            stddev: Number(f.stddev),
+          })}
+        >
+          {dirty ? "Set" : "Set"}
+        </button>
+      </div>
+
+      <div className="wex-admin-hint">
+        Presets:{" "}
+        {[
+          ["Gentle swell", { interval_seconds: 300, mean: 0, stddev: 1.5 }],
+          ["Choppy", { interval_seconds: 180, mean: 0, stddev: 4 }],
+          ["Slow bleed", { interval_seconds: 300, mean: -1, stddev: 2 }],
+          ["Bull run", { interval_seconds: 300, mean: 1.5, stddev: 2 }],
+          ["Storm", { interval_seconds: 120, mean: 0, stddev: 9 }],
+        ].map(([label, p]) => (
+          <button
+            key={label}
+            className="wex-link"
+            style={{ marginRight: 10 }}
+            // Fills the fields AND saves. A preset that only populated the
+            // boxes and waited for a second click on Set looks broken — you
+            // press "Choppy", the market stays calm, and nothing says why.
+            onClick={() => {
+              setF({ interval_seconds: p.interval_seconds, mean: p.mean, stddev: p.stddev });
+              act("set_drift", p);
+            }}
+            disabled={busy}
+          >
+            {label}
+          </button>
+        ))}
+        <br />
+        Mean is the tide, spread is the chop. A negative mean is the only thing
+        that makes holding cash a real decision — it is how you stop the
+        leaderboard freezing once everyone is invested. Halted companies sit it
+        out, and drift stops entirely when the market is closed.
+      </div>
     </>
   );
 }
@@ -377,9 +518,16 @@ function PlayersTab({ password, say }) {
   async function act(action, params, confirmText) {
     if (confirmText && !confirm(confirmText)) return;
     setBusy(true);
-    const { data } = await gm(password, action, params);
+    const { status, data } = await gm(password, action, params);
     setBusy(false);
-    if (data?.code) say(`New code: ${data.code}`, true);
+    // Same fix as the Exchange tab: this used to say nothing at all unless a
+    // new code came back, so a failed set_cash or delete was indistinguishable
+    // from a successful one.
+    if (status >= 400 || data?.ok === false) {
+      say(data?.error || `The exchange refused that (${status}).`, false);
+    } else if (data?.code) {
+      say(`New code: ${data.code}`, true);
+    }
     load();
   }
 

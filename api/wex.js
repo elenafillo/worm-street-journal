@@ -155,6 +155,12 @@ export default async function handler(req, res) {
           // The gate uses this to decide whether to ask for a name.
           return res.status(200).json({ needs_claim: true });
         }
+        // The second of the two things that drive price drift (the GM panel's
+        // poll is the other) — so the market still breathes when nobody is
+        // watching the Worm Fed's laptop. Time-gated and idempotent, so on all
+        // but one poll per interval this is a single cheap SELECT.
+        // See supabase/drift.sql for why there is no cron.
+        await rpc("wex_drift", {});
         return res.status(200).json(await portfolioFor(player));
       }
 

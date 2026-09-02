@@ -1,5 +1,5 @@
 import { useRef, useEffect } from "react";
-import { TRADE_RULES, MARKET_RULES, CHART_NOTES } from "./rules.js";
+import { TRADE_RULES, MARKET_RULES, DRIFT_RULE, CHART_NOTES } from "./rules.js";
 
 // ============================================================
 // Explaining the exchange — the components
@@ -30,8 +30,13 @@ export function HowToTrade({ limit }) {
  * trapping and inertness of the page behind it for free, none of which a
  * hand-rolled overlay div gets right without real work.
  */
-export function HowWexWorks({ open, onClose }) {
+export function HowWexWorks({ open, onClose, driftEnabled = false }) {
   const ref = useRef(null);
+
+  // The drift rule appears only while drift is actually running — it is the one
+  // rule the Worm Fed can switch off mid-evening, and a rule that is false is
+  // worse than a rule that is missing.
+  const marketRules = driftEnabled ? [DRIFT_RULE, ...MARKET_RULES] : MARKET_RULES;
 
   useEffect(() => {
     const el = ref.current;
@@ -60,7 +65,7 @@ export function HowWexWorks({ open, onClose }) {
 
       <div className="wex-how-section">The market</div>
       <ol className="wex-how-list" start={TRADE_RULES.length + 1}>
-        {MARKET_RULES.map((r) => (
+        {marketRules.map((r) => (
           <li key={r.title}>
             <strong>{r.title}.</strong> {r.body}
           </li>

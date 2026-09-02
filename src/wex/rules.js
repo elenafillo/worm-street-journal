@@ -89,6 +89,19 @@ export const MARKET_RULES = [
   },
 ];
 
+/**
+ * Shown only while `market_state.drift_enabled` is true.
+ *
+ * Conditional because it is the one rule that can become a lie: drift is off by
+ * default and the Worm Fed can becalm the market at any point in the evening. A
+ * printed rule saying prices move on their own, on a night they don't, is worse
+ * than no rule — so it is toggled by the same flag that governs the behaviour.
+ */
+export const DRIFT_RULE = {
+  title: "The market moves on its own",
+  body: "Prices drift every few minutes whether or not anyone trades, by an amount nobody chooses. Your holdings gain and lose while you stand at the bar. Halted companies sit it out, and nothing drifts once the bell has closed the exchange.",
+};
+
 /** Reading the chart — only shown on the wall, where the chart is. */
 export const CHART_NOTES = [
   ["Each line is a company",

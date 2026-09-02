@@ -47,6 +47,10 @@ export const dashStyles = `
     font-size: 12px; font-weight: 700; letter-spacing: 2px;
     text-transform: uppercase; padding: 6px 12px; white-space: nowrap;
   }
+  .wexd-drift {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 2px;
+    color: var(--muted); white-space: nowrap;
+  }
   .wexd-how-btn {
     background: none; border: 1px solid var(--rule); cursor: pointer;
     font-family: inherit; font-size: 11px; letter-spacing: 1px;

@@ -119,13 +119,23 @@ export default function WexDash() {
           <div className={`wexd-stamp ${market.is_open ? "open" : "closed"}`}>
             {market.is_open ? "● Open" : "● Closed"}
           </div>
+          {/* Worth saying out loud on the wall: if prices are moving with an
+              empty floor, people should know it is the weather and not a trade
+              they missed. */}
+          {market.drift_enabled && market.is_open && (
+            <div className="wexd-drift">◈ Drifting</div>
+          )}
           <button className="wexd-how-btn" onClick={() => setExplainer(true)}>
             How does WEX even work?
           </button>
         </div>
       </header>
 
-      <HowWexWorks open={explainer} onClose={() => setExplainer(false)} />
+      <HowWexWorks
+        open={explainer}
+        onClose={() => setExplainer(false)}
+        driftEnabled={Boolean(market.drift_enabled)}
+      />
 
       {error && <div className="wexd-error">{error} — showing the last figures received.</div>}
 
