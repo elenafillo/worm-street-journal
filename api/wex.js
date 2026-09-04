@@ -41,9 +41,16 @@ async function findPlayer(code) {
  * phone now reads straight from PostgREST instead. `companies` and `market` are
  * still returned so the first paint after the gate has figures immediately, and
  * so a trade response is self-contained.
+ *
+ * `trades` rides along for the same reason and at the same price: it is this
+ * player's own ledger, it changes on exactly the same occasions as `holdings`,
+ * and it is what src/wex/portfolioSeries.js replays to reconstruct their wealth
+ * over time. Sending it here costs one more PostgREST read inside a round trip
+ * that was happening anyway, and saves the phone a serverless invocation of its
+ * own every time it wants to draw a chart.
  */
 async function portfolioFor(player) {
-  const [companies, holdings, state] = await Promise.all([
+  const [companies, holdings, state, trades] = await Promise.all([
     // `liquidity` is included so the client can preview what a trade will cost
     // and how far it will move the price. Display only — the server recomputes.
     rest(
@@ -52,6 +59,16 @@ async function portfolioFor(player) {
     ),
     rest("holdings", `select=company_id,shares&player_id=eq.${player.id}&shares=neq.0`),
     rest("market_state", "select=is_open,min_price,max_impact&id=eq.1"),
+    // Newest first with a cap, then flipped below. PostgREST answers with at
+    // most 1000 rows whatever you ask for, so if a guest ever does trade more
+    // than that, the cap must keep the RECENT end — the reconstruction unwinds
+    // backwards from the position we know, so it is the recent end that carries
+    // the chart. Losing the oldest trades costs the realised/unrealised split
+    // (portfolioSeries reports `exact: false`), never the wealth line.
+    rest(
+      "trades",
+      `select=company_id,side,shares,total,created_at&player_id=eq.${player.id}&order=id.desc&limit=1000`
+    ),
   ]);
 
   const held = new Map(
@@ -80,6 +97,7 @@ async function portfolioFor(player) {
         : null,
     },
     holdings: Array.isArray(holdings) ? holdings : [],
+    trades: Array.isArray(trades) ? [...trades].reverse() : [],   // oldest first
     companies: positions,
     market: Array.isArray(state) && state[0] ? state[0] : { is_open: false },
   };

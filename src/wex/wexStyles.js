@@ -82,6 +82,100 @@ export const wexStyles = `
     border-left: 4px solid var(--red); background: var(--wex-down-bg);
   }
 
+  /* ---------------- Your fortune over time ----------------
+     A disclosure, not a card: it sits between the header and the desk, and when
+     it is folded the desk should look exactly as it did before it existed. */
+  .wexf { margin-top: 18px; }
+  .wexf-toggle {
+    width: 100%; padding: 0; min-height: 40px;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    background: none; border: none; cursor: pointer;
+    font-family: inherit; font-size: 11px; letter-spacing: 3px;
+    text-transform: uppercase; color: var(--muted); text-align: left;
+  }
+  .wexf-chev { font-size: 10px; }
+
+  /* Four windows on a phone: the row is theirs, and they share it evenly rather
+     than letting "All time" push the last one off a 320px screen. */
+  .wexf-windows {
+    display: flex; margin: 4px 0 14px;
+    border: 1px solid var(--rule); background: var(--paper-dark);
+  }
+  .wexf-seg {
+    flex: 1; padding: 9px 2px; min-height: 40px;
+    font-family: inherit; font-size: 10px; letter-spacing: 0.5px;
+    text-transform: uppercase; cursor: pointer; white-space: nowrap;
+    background: none; border: none; color: var(--muted);
+  }
+  .wexf-seg + .wexf-seg { border-left: 1px solid var(--rule); }
+  .wexf-seg.active { background: var(--ink); color: var(--paper); }
+
+  .wexf-block { margin-bottom: 18px; }
+  .wexf-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 10px; margin-bottom: 2px;
+  }
+  .wexf-label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 2px;
+    color: var(--muted);
+  }
+  .wexf-figure {
+    font-family: 'Barlow Condensed', 'Playfair Display', serif;
+    font-size: 20px; font-weight: 700;
+  }
+  .wexf-figure.up { color: var(--wex-up); }
+  .wexf-figure.down { color: var(--red); }
+  .wexf-figure-pct { font-size: 13px; margin-left: 6px; opacity: 0.75; }
+
+  .wexf-chart-wrap { width: 100%; }
+  .wexf-chart { display: block; overflow: visible; }
+  .wexf-gap { fill: var(--paper-darker); }
+  .wexf-grid { stroke: var(--rule); stroke-width: 1; opacity: 0.5; }
+  .wexf-axis { font-size: 9px; fill: var(--muted); letter-spacing: 0.5px; }
+  /* Dashed, unlike the gridlines, because it IS a threshold: above it you are
+     ahead, below it you are behind. */
+  .wexf-baseline { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+  .wexf-baseline-label {
+    font-size: 9px; fill: var(--muted); text-transform: uppercase; letter-spacing: 1px;
+  }
+  .wexf-line { fill: none; stroke-width: 2; stroke-linejoin: round; }
+  .wexf-line.main { stroke: var(--ink); }
+  .wexf-line.main.up { stroke: var(--wex-up); }
+  .wexf-line.main.down { stroke: var(--red); }
+  .wexf-area { stroke: none; }
+  .wexf-area.up { fill: var(--wex-up); opacity: 0.10; }
+  .wexf-area.down { fill: var(--red); opacity: 0.10; }
+
+  /* Solid, not translucent: at four pixels wide a 10%-opacity bar is invisible
+     on a projector and nearly so on a phone in a dark room. */
+  .wexf-bar.up { fill: var(--wex-up); }
+  .wexf-bar.down { fill: var(--red); }
+
+  .wexf-split { display: flex; gap: 10px; margin-top: 8px; }
+  .wexf-split-cell {
+    flex: 1; display: flex; flex-direction: column; gap: 1px;
+    padding: 8px 10px; background: var(--paper-dark);
+  }
+  .wexf-split-label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--muted);
+  }
+  .wexf-split-value {
+    font-family: 'Barlow Condensed', 'Playfair Display', serif;
+    font-size: 17px; font-weight: 700;
+  }
+  .wexf-split-value.up { color: var(--wex-up); }
+  .wexf-split-value.down { color: var(--red); }
+  .wexf-split-note { font-size: 10px; color: var(--muted); line-height: 1.4; }
+
+  .wexf-empty, .wexf-foot, .wexf-caption {
+    font-size: 12px; color: var(--muted); line-height: 1.6; padding: 6px 0;
+  }
+  .wexf-note {
+    font-size: 12px; color: var(--muted); line-height: 1.6;
+    margin-top: 8px; padding: 8px 10px;
+    border-left: 3px solid var(--rule); background: var(--paper-dark);
+  }
+
   /* ---------------- Company list ---------------- */
   .wex-section-label {
     font-size: 11px; text-transform: uppercase; letter-spacing: 3px;

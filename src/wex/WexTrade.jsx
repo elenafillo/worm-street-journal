@@ -1,9 +1,13 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { wex, storedCode, rememberCode, forgetCode } from "./wexApi.js";
-import { usePrices } from "./useMarketData.js";
+import { usePrices, useTicks } from "./useMarketData.js";
 import { HowToTrade } from "./HowItWorks.jsx";
+import PortfolioChart from "./PortfolioChart.jsx";
+import { buildFortune } from "./portfolioSeries.js";
+import { CHART_WINDOWS, resolveWindow, windowStart } from "./chartSeries.js";
 import {
-  formatWormcoin, formatPct, pctChange, previewTrade, maxAffordableShares, WORMCOIN,
+  formatWormcoin, formatPct, signedWormcoin, pctChange, previewTrade,
+  maxAffordableShares, WORMCOIN,
 } from "./format.js";
 
 // This screen polls TWO things at very different rates, and the split is the
@@ -25,6 +29,21 @@ import {
 // invocations and something a Hobby plan does not notice.
 const PRICE_POLL_MS = 5000;
 const PORTFOLIO_POLL_MS = 45000;
+// The tick history behind the fortune charts. Slower than prices on purpose:
+// these rows are the past, and the right edge of every line is drawn from the
+// live prices above. Nothing is fetched at all until the panel is open.
+const TICK_POLL_MS = 15000;
+
+const FORTUNE_KEY = "wex_fortune_open";
+
+function storedFlag(key, fallback) {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? fallback : v === "1";
+  } catch {
+    return fallback;      // private browsing; the panel just starts open
+  }
+}
 
 // ============================================================
 // The three-word gate
@@ -267,6 +286,166 @@ function CompanyRow({ co, open, onToggle, marketOpen, cash, maxImpact, onTrade, 
 }
 
 // ============================================================
+// Your fortune over time
+// ============================================================
+// Two charts from one replay of the ledger — see portfolioSeries.js for why
+// there is no table behind this and does not need to be.
+//
+// Folded by a disclosure rather than always open, and the choice is remembered.
+// This screen is a trading desk first: someone who came to buy should not have
+// to scroll past four hundred pixels of their own history to reach the Buy
+// button, and someone who came to gloat should not have to unfold it every time
+// their phone locks.
+//
+// Nothing is fetched at all while it is folded. useTicks does not run.
+function Fortune({ player, holdings, trades, companies, openedAt, open, onToggle }) {
+  const [windowId, setWindowId] = useState("session");
+  const { ticks, loaded } = useTicks(open, TICK_POLL_MS);
+
+  // The right edge is "now" and keeps moving between polls. State rather than a
+  // Date.now() read during render, for the same reason as in PriceChart: the
+  // same props must draw the same chart. Stopped while folded and while hidden.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!open) return;
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible") setNow(Date.now());
+    }, 3000);
+    return () => clearInterval(id);
+  }, [open]);
+
+  const { windowMs, startAt } = resolveWindow(windowId, openedAt);
+
+  const fortune = useMemo(() => {
+    if (!open || !ticks.length) return null;
+    const t0 = windowStart({ windowMs, startAt, earliest: ticks[0].t, now });
+    return buildFortune({
+      trades, ticks, companies,
+      cashNow: player.cash,
+      holdingsNow: holdings,
+      startingCash: player.starting_cash,
+      t0, t1: now,
+    });
+  }, [open, ticks, trades, companies, holdings,
+      player.cash, player.starting_cash, windowMs, startAt, now]);
+
+  const dir = (n) => (n > 0 ? "up" : n < 0 ? "down" : "");
+
+  return (
+    <section className="wexf">
+      <button className="wexf-toggle" onClick={onToggle} aria-expanded={open}>
+        <span>Your fortune over time</span>
+        <span className="wexf-chev" aria-hidden="true">{open ? "▾" : "▸"}</span>
+      </button>
+
+      {open && (
+        <>
+          <div className="wexf-windows" role="group" aria-label="Time window">
+            {CHART_WINDOWS.map((w) => (
+              <button
+                key={w.id}
+                className={`wexf-seg ${windowId === w.id ? "active" : ""}`}
+                onClick={() => setWindowId(w.id)}
+              >
+                {w.label}
+              </button>
+            ))}
+          </div>
+
+          {!fortune ? (
+            <div className="wexf-empty">
+              {loaded ? "No prices on record yet." : "Reading the ledger…"}
+            </div>
+          ) : (
+            <>
+              <div className="wexf-block">
+                <div className="wexf-head">
+                  <span className="wexf-label">Net worth</span>
+                  <span className={`wexf-figure ${dir(fortune.change)}`}>
+                    {signedWormcoin(fortune.change)}
+                    {fortune.changePct !== null && (
+                      <span className="wexf-figure-pct">{formatPct(fortune.changePct)}</span>
+                    )}
+                  </span>
+                </div>
+                <PortfolioChart
+                  mode="wealth"
+                  pick={(s) => s.wealth}
+                  samples={fortune.samples}
+                  t0={fortune.open.t}
+                  t1={fortune.close.t}
+                  baseline={fortune.startingCash}
+                  baselineLabel="started with"
+                />
+              </div>
+
+              <div className="wexf-block">
+                <div className="wexf-head">
+                  <span className="wexf-label">Profit &amp; loss</span>
+                  <span className={`wexf-figure ${dir(fortune.close.pnl)}`}>
+                    {signedWormcoin(fortune.close.pnl)}
+                  </span>
+                </div>
+                <PortfolioChart
+                  mode="bars"
+                  pick={(s) => s.pnl}
+                  samples={fortune.samples}
+                  t0={fortune.open.t}
+                  t1={fortune.close.t}
+                />
+                <div className="wexf-caption">
+                  Green is a slice of the window you made money in, red one you lost
+                  it in. They add up to {signedWormcoin(fortune.change)} across this
+                  window; the figure above is your profit since the start.
+                </div>
+
+                {/* The reason this is a second chart and not the first one
+                    shifted down. Total P&L is exactly net worth minus what you
+                    started with; the split is the part you cannot read off the
+                    line above. */}
+                <div className="wexf-split">
+                  <div className="wexf-split-cell">
+                    <span className="wexf-split-label">Banked</span>
+                    <span className={`wexf-split-value ${dir(fortune.close.realised)}`}>
+                      {signedWormcoin(fortune.close.realised)}
+                    </span>
+                    <span className="wexf-split-note">profit you have sold for</span>
+                  </div>
+                  <div className="wexf-split-cell">
+                    <span className="wexf-split-label">On paper</span>
+                    <span className={`wexf-split-value ${dir(fortune.close.unrealised)}`}>
+                      {signedWormcoin(fortune.close.unrealised)}
+                    </span>
+                    <span className="wexf-split-note">still riding on what you hold</span>
+                  </div>
+                </div>
+
+                {/* Only reachable if the Worm Fed has adjusted this player's
+                    cash by hand, or the ledger came back capped. The net worth
+                    line above is unaffected either way — say which is which
+                    rather than quietly showing a number that does not add up. */}
+                {!fortune.exact && (
+                  <div className="wexf-note">
+                    The books do not quite balance — someone has had a hand in your
+                    fortune outside the market. Net worth is right; the split
+                    between banked and paper profit is a best guess.
+                  </div>
+                )}
+              </div>
+
+              <div className="wexf-foot">
+                Rebuilt from your own trades and every price the market has shown.
+                Quiet stretches are squeezed, so an overnight hold does not eat the chart.
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+// ============================================================
 // Dashboard
 // ============================================================
 export default function WexTrade() {
@@ -276,6 +455,15 @@ export default function WexTrade() {
   const [toast, setToast] = useState(null);
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(Boolean(storedCode()));
+  const [fortuneOpen, setFortuneOpen] = useState(() => storedFlag(FORTUNE_KEY, true));
+
+  function toggleFortune() {
+    setFortuneOpen((was) => {
+      const next = !was;
+      try { localStorage.setItem(FORTUNE_KEY, next ? "1" : "0"); } catch { /* not fatal */ }
+      return next;
+    });
+  }
 
   const refresh = useCallback(async (theCode) => {
     const { status, data: d } = await wex("portfolio", { code: theCode });
@@ -370,6 +558,14 @@ export default function WexTrade() {
     };
   }, [data, livePrices, liveMarket, pricesLoaded]);
 
+  // The ledger, with `created_at` turned into the millisecond stamp every chart
+  // works in. Kept out of the `view` memo above because it does not depend on
+  // prices and so has no reason to be rebuilt every five seconds.
+  const trades = useMemo(
+    () => (data?.trades || []).map((tr) => ({ ...tr, t: new Date(tr.created_at).getTime() })),
+    [data]
+  );
+
   async function handleTrade(co, side, shares) {
     if (busy) return;               // party wifi is flaky; double-taps are the likeliest bug
     setBusy(true);
@@ -450,6 +646,16 @@ export default function WexTrade() {
       {toast && (
         <div className={`wex-toast ${toast.good ? "good" : "bad"}`}>{toast.text}</div>
       )}
+
+      <Fortune
+        player={player}
+        holdings={data.holdings || []}
+        trades={trades}
+        companies={companies}
+        openedAt={market.opened_at}
+        open={fortuneOpen}
+        onToggle={toggleFortune}
+      />
 
       <div className="wex-section-label">The Listings</div>
       {companies.map((co) => (
