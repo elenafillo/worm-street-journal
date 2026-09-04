@@ -7,6 +7,66 @@
 //
 // Nothing here touches React, the DOM, or the clock: `now` is always passed in.
 
+// ============================================================
+// The time windows every chart offers
+// ============================================================
+// Shared between the wall (#wex) and the phone (#trade) so the two screens
+// cannot drift apart on what "Session" means. Two shapes of window:
+//
+//   `ms`    a duration back from now. "The last hour" means the last hour.
+//   `since` an instant to start at:
+//             "open"  — when the bell last rang (`market_state.opened_at`), so
+//                       a fresh evening is not read through yesterday's prices.
+//             "first" — the oldest tick held, which since the paged history
+//                       load in useMarketData is the first tick ever written:
+//                       activation, or the last reset.
+//
+// "Session" was previously `ms: null` and drew from the oldest tick HELD, with
+// no relation to the session at all. The client only ever held the newest 1000
+// ticks — PostgREST's page cap, silently applied — so on a market open for a
+// day and a half it drew the last thirteen hours and called them the session.
+export const CHART_WINDOWS = [
+  { id: "15m", label: "15 min", ms: 15 * 60 * 1000 },
+  { id: "1h", label: "1 hour", ms: 60 * 60 * 1000 },
+  { id: "session", label: "Session", ms: null, since: "open" },
+  { id: "all", label: "All time", ms: null, since: "first" },
+];
+
+/**
+ * A window id plus the market's opening time, resolved into the two props the
+ * charts actually take. Falls back to the hour rather than throwing on an id
+ * that came out of a URL.
+ *
+ * A market that has never been opened — or has been reset — has no `openedAt`.
+ * "Since the bell" with no bell is best answered with everything there is,
+ * which is what a null `startAt` means to a chart.
+ */
+export function resolveWindow(id, openedAt) {
+  const win = CHART_WINDOWS.find((w) => w.id === id) ?? CHART_WINDOWS[1];
+  return {
+    win,
+    windowMs: win.ms,
+    startAt: win.since === "open" && openedAt ? new Date(openedAt).getTime() : null,
+  };
+}
+
+/**
+ * The left edge of a chart, from a window and the data behind it.
+ *
+ * A duration window is measured back from now. An instant window is used as
+ * given — but never earlier than the oldest data held: a series has no value to
+ * carry into a stretch that predates its own history, so the left of the plot
+ * would fill with a flat line at TODAY'S figure. Empty is honest; a fabricated
+ * flat line is not.
+ *
+ * Shared by the price chart and the fortune charts so a guest comparing their
+ * phone to the wall is looking at the same left edge.
+ */
+export function windowStart({ windowMs, startAt, earliest, now }) {
+  const anchor = startAt ? Math.max(startAt, earliest) : earliest;
+  return windowMs ? now - windowMs : Math.min(anchor, now - 60_000);
+}
+
 /**
  * Prices change discretely, at trades. A step-after path is the honest shape;
  * a smoothed spline would invent movement that never happened.
@@ -17,7 +77,7 @@
  * precision that no screen can show. Over three days of ticks it was the
  * difference between 170KB of path re-parsed every three seconds and 40KB.
  */
-const px = (n) => Math.round(n * 10) / 10;
+export const px = (n) => Math.round(n * 10) / 10;
 
 export function stepPath(points) {
   if (!points.length) return "";
@@ -221,6 +281,45 @@ export function downsample(points, toChart, total, { target = 160, epsilon = 0 }
   // bucketing can drop the first one when its bucket had a later extreme.
   if (out[0] !== points[0]) out.unshift(points[0]);
   if (out[out.length - 1] !== points[points.length - 1]) out.push(points[points.length - 1]);
+  return out;
+}
+
+/**
+ * Slice a running total into per-bucket CHANGES — the maths behind the P&L
+ * histogram.
+ *
+ * Bucketed by CHART position rather than by real time, for the same reason
+ * downsample() is: the time axis squeezes dead air, and bucketing by clock time
+ * would hand a ten-hour overnight gap two hundred bars to share between four
+ * pixels. (Those bars are all zero anyway — a gap is by definition a stretch in
+ * which nothing ticked — but they would still crowd out the evening.)
+ *
+ * A bucket containing no points inherits the previous bucket's level, so its
+ * change is zero. That is the honest reading of "nothing happened here", and it
+ * is why the bars are computed from carried levels rather than from whatever
+ * points happen to fall inside each slot.
+ *
+ * The first bucket measures from `points[0]`, which callers make the carry-in
+ * sample at the window start — so the bars sum to exactly the change across the
+ * window, with nothing falling down the gap at the left edge.
+ */
+export function bucketChanges(points, toChart, total, count) {
+  if (points.length < 2 || count < 1) return [];
+
+  const width = (total || 1) / count;
+  const ends = new Array(count).fill(null);
+  for (const p of points) {
+    const i = Math.min(count - 1, Math.max(0, Math.floor(toChart(p.t) / width)));
+    ends[i] = p.v;
+  }
+
+  const out = [];
+  let prev = points[0].v;
+  for (let i = 0; i < count; i++) {
+    const end = ends[i] === null ? prev : ends[i];
+    out.push({ i, ca: i * width, cb: (i + 1) * width, delta: end - prev });
+    prev = end;
+  }
   return out;
 }
 

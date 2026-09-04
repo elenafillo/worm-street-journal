@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useMemo } from "react";
-import { formatWormcoin, formatPct } from "./format.js";
+import { formatWormcoin, formatPct, timeLabel } from "./format.js";
 import { colorOf } from "./palette.js";
 import {
   stepPath, buildSeries, niceTicks, yDomain, spreadLabels, buildTimeScale, downsample,
+  windowStart,
 } from "./chartSeries.js";
 
 /** "8h", "45m" — how much time a compressed gap swallowed. */
@@ -30,7 +31,8 @@ export default function PriceChart({
   companies,
   ticks,
   events = [],
-  windowMs,          // null = whole session
+  windowMs,          // a duration back from now; null = use `startAt` instead
+  startAt = null,    // an absolute instant to start at; null = the oldest tick held
   yMode = "pct",
   hidden = {},       // { [companyId]: true }
   onToggleSeries,
@@ -72,7 +74,7 @@ export default function PriceChart({
     if (!width || !companies.length) return null;
 
     const earliest = ticks.length ? ticks[0].t : now - 60_000;
-    const t0 = windowMs ? now - windowMs : Math.min(earliest, now - 60_000);
+    const t0 = windowStart({ windowMs, startAt, earliest, now });
     const t1 = now;
 
     const series = buildSeries({ companies: visible, ticks, t0, t1, yMode });
@@ -140,8 +142,11 @@ export default function PriceChart({
       .slice(-6)
       .map((e, i) => ({ ...e, n: i + 1, x: xOf(e.t) }));
 
-    return { t0, t1, lo, hi, plotW, plotH, xOf, yOf, scale, drawn, labels, marks, gapBands };
-  }, [width, height, now, companies, visible, ticks, events, windowMs, yMode]);
+    return {
+      t0, t1, span: t1 - t0,
+      lo, hi, plotW, plotH, xOf, yOf, scale, drawn, labels, marks, gapBands,
+    };
+  }, [width, height, now, companies, visible, ticks, events, windowMs, startAt, yMode]);
 
   // ---- Hover: crosshair + tooltip -----------------------------------------
   // A projector has no pointer, but the same URL gets opened on a laptop, and
@@ -272,7 +277,7 @@ export default function PriceChart({
                 y={height - 8}
                 textAnchor={f === 0 ? "start" : f === 1 ? "end" : "middle"}
               >
-                {new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                {timeLabel(t, model.span)}
               </text>
             );
           })}
@@ -294,9 +299,7 @@ export default function PriceChart({
             top: PAD.top,
           }}
         >
-          <div className="wexd-tooltip-time">
-            {new Date(hover.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-          </div>
+          <div className="wexd-tooltip-time">{timeLabel(hover.t, model.span)}</div>
           {hover.readings.map((r) => (
             <div key={r.ticker} className="wexd-tooltip-row">
               <span className="wexd-swatch" style={{ background: r.color }} />
@@ -315,9 +318,7 @@ export default function PriceChart({
           {model.marks.map((m) => (
             <li key={m.id}>
               <span className="wexd-event-badge">{m.n}</span>
-              <span className="wexd-event-time">
-                {new Date(m.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-              </span>
+              <span className="wexd-event-time">{timeLabel(m.t, model.span)}</span>
               <span className="wexd-event-head">{m.headline}</span>
               {Number(m.pct_change) !== 0 && (
                 <span className={`wexd-event-pct ${Number(m.pct_change) > 0 ? "up" : "down"}`}>

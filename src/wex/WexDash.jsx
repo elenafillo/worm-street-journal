@@ -3,6 +3,7 @@ import { useMarketData } from "./useMarketData.js";
 import PriceChart from "./PriceChart.jsx";
 import { colorOf } from "./palette.js";
 import { HowWexWorks } from "./HowItWorks.jsx";
+import { CHART_WINDOWS, resolveWindow } from "./chartSeries.js";
 import { formatWormcoin, formatPct, pctChange, WORMCOIN } from "./format.js";
 
 // ============================================================
@@ -20,11 +21,9 @@ import { formatWormcoin, formatPct, pctChange, WORMCOIN } from "./format.js";
 // no write path, nothing about an individual that `leaderboard` does not
 // already show.
 
-const WINDOWS = [
-  { id: "15m", label: "15 min", ms: 15 * 60 * 1000 },
-  { id: "1h", label: "1 hour", ms: 60 * 60 * 1000 },
-  { id: "all", label: "Session", ms: null },
-];
+// The window list itself lives in chartSeries.js, shared with the phone's
+// fortune charts so the two screens cannot disagree about what "Session" means.
+const WINDOWS = CHART_WINDOWS;
 
 function hashParams() {
   const q = window.location.hash.includes("?")
@@ -57,7 +56,9 @@ export default function WexDash() {
     return h;
   }, [only, hidden, companies]);
 
-  const windowMs = WINDOWS.find((w) => w.id === windowId)?.ms ?? null;
+  // `?window=all` in an existing link kept its meaning: it used to be the
+  // widest view on offer and it still is.
+  const { windowMs, startAt } = resolveWindow(windowId, market.opened_at);
 
   const statsById = useMemo(
     () => new Map(stats.map((s) => [s.company_id, s])),
@@ -154,7 +155,7 @@ export default function WexDash() {
           One row, above everything it scopes. Not inside the chart card: the
           window also frames how you read the movers and the tape below it. */}
       <div className="wexd-controls">
-        <div className="wexd-segmented" role="group" aria-label="Time window">
+        <div className="wexd-segmented wexd-windows" role="group" aria-label="Time window">
           {WINDOWS.map((w) => (
             <button
               key={w.id}
@@ -188,6 +189,7 @@ export default function WexDash() {
           ticks={ticks}
           events={events}
           windowMs={windowMs}
+          startAt={startAt}
           yMode={yMode}
           hidden={effectiveHidden}
           onToggleSeries={toggle}

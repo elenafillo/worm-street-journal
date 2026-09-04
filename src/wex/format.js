@@ -41,6 +41,34 @@ export function formatPct(value) {
   return `${sign}${Math.abs(n).toFixed(1)}%`;
 }
 
+/**
+ * A gain or a loss, which always carries its sign: "+2.5k ⌀", "−400 ⌀".
+ *
+ * formatWormcoin already keeps a negative, but with a hyphen; this uses the
+ * real minus sign so a loss lines up with formatPct beside it.
+ */
+export function signedWormcoin(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  const sign = n > 0 ? "+" : n < 0 ? "−" : "";
+  return `${sign}${formatWormcoin(Math.abs(n), { symbol: true })}`;
+}
+
+/**
+ * The clock on every chart axis, tooltip and event list.
+ *
+ * A bare `22:19` is fine on an hour of chart and a liar on two days of it: an
+ * all-time view running from Tuesday night to Thursday morning reads
+ * `22:19 … 09:55`, which anyone will take for a single night. Past a day, name
+ * the day as well. Under that, the weekday is noise on every label.
+ */
+export function timeLabel(t, spanMs) {
+  const d = new Date(t);
+  const hm = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (spanMs < 20 * 3_600_000) return hm;
+  return `${d.toLocaleDateString([], { weekday: "short" })} ${hm}`;
+}
+
 /** Percent change of a price against its opening value. */
 export function pctChange(price, openPrice) {
   const p = Number(price);

@@ -20,6 +20,56 @@ const SLOW_MS = 6000;   // standings and aggregates — no reason to match a pri
 // few thousand rows; this is a ceiling, not an expectation.
 const TICK_CAP = 6000;
 
+// PostgREST answers with at most `max-rows` rows per request — 1000 on Supabase
+// — and it does NOT complain when you ask for more: `limit=6000` comes back as
+// a silent 1000 with `Content-Range: 0-999/*`. That is worth spelling out
+// because it cost us a chart. The "Session" view starts at the oldest tick the
+// browser holds, so a single capped request quietly turned "the whole session"
+// into "the last thousand ticks" — about thirteen hours of a market that had
+// been open for thirty-five, with nothing on screen to say so.
+const PAGE_MAX = 1000;
+
+const TICK_COLUMNS = "id,company_id,price,reason,created_at";
+
+/**
+ * The whole tick history, oldest first, in pages.
+ *
+ * Paged by KEYSET (`id < lowest seen`) rather than by offset. Offset paging
+ * would be a bug here: ticks are being inserted at the head of `id.desc` while
+ * we walk, so every insert between two pages shifts the window and hands back a
+ * row we already have — or skips one we do not. Ids are a bigserial and only
+ * ever grow, so a keyset cursor is stable no matter what the market does
+ * mid-fetch.
+ *
+ * Runs once, at mount. Every poll after it is the incremental `id > last` query.
+ */
+async function fetchTickHistory(cap) {
+  const pages = [];
+  let held = 0;
+  let before = null;
+
+  while (held < cap) {
+    const want = Math.min(PAGE_MAX, cap - held);
+    const page = await supabase.query("price_ticks", {
+      select: TICK_COLUMNS,
+      order: "id.desc",
+      limit: want,
+      ...(before === null ? {} : { params: { id: `lt.${before}` } }),
+    });
+    if (!Array.isArray(page) || !page.length) break;
+
+    pages.push(page);
+    held += page.length;
+
+    // A short page is the beginning of history; a full one might not be.
+    if (page.length < want) break;
+    before = page[page.length - 1].id;
+  }
+
+  // Newest-first pages of newest-first rows: flatten, then flip the lot once.
+  return pages.flat().reverse();
+}
+
 /**
  * Price ticks arrive incrementally.
  *
@@ -116,6 +166,78 @@ export function usePrices(intervalMs = 5000) {
   return { companies, market, loaded };
 }
 
+/**
+ * Just the price-tick history — for the phone's own fortune charts.
+ *
+ * LAZY ON PURPOSE. The wall wants ticks the moment it loads; a guest's phone
+ * only wants them if that guest opens the charts, and by the third day of a
+ * party the history is a few thousand rows. Downloading that to eighty phones
+ * that may never scroll to it is exactly the kind of thing this codebase has
+ * spent its effort avoiding. So nothing happens until `enabled` goes true, and
+ * the expensive paged load runs once per session however often the panel is
+ * folded and unfolded after that.
+ *
+ * Polls slowly. The right edge of the chart is drawn from live company prices,
+ * which usePrices already refreshes every five seconds — these rows are the
+ * HISTORY, and history a few seconds late is still history.
+ */
+export function useTicks(enabled = false, intervalMs = 15000) {
+  const [ticks, setTicks] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const lastTickId = useRef(0);
+
+  const poll = useCallback(async (full) => {
+    try {
+      const rows = full
+        ? await fetchTickHistory(TICK_CAP)
+        : await supabase.query("price_ticks", {
+            select: TICK_COLUMNS,
+            order: "id.asc",
+            limit: PAGE_MAX,
+            params: { id: `gt.${lastTickId.current}` },
+          });
+      if (!Array.isArray(rows) || !rows.length) return;
+
+      const mapped = rows.map(tickRow);
+      lastTickId.current = Math.max(lastTickId.current, ...mapped.map((r) => r.id));
+      setTicks((prev) => {
+        const merged = full ? mapped : [...prev, ...mapped];
+        const trimmed = trimAtReset(merged);
+        return trimmed.length > TICK_CAP ? trimmed.slice(-TICK_CAP) : trimmed;
+      });
+    } catch {
+      // Hold the history we already have. A chart that empties itself because
+      // one poll failed on party wifi is worse than one a few seconds stale.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let alive = true;
+
+    (async () => {
+      // `lastTickId` is the record of having loaded at all, and it survives the
+      // panel being closed and reopened — so that only ever costs the cheap
+      // incremental query, never the full walk again.
+      await poll(lastTickId.current === 0);
+      if (alive) setLoaded(true);
+    })();
+
+    const visible = () => document.visibilityState === "visible";
+    const id = setInterval(() => { if (visible()) poll(false); }, intervalMs);
+    const onVisible = () => { if (visible()) poll(false); };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      alive = false;
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [enabled, intervalMs, poll]);
+
+  return { ticks, loaded };
+}
+
 export function useMarketData() {
   const [companies, setCompanies] = useState([]);
   const [market, setMarket] = useState({});
@@ -134,13 +256,18 @@ export function useMarketData() {
 
   const loadFast = useCallback(async (full) => {
     try {
-      const tickQuery = full
-        // Newest-first with a cap, then reversed — so an over-long history
-        // gives us the most RECENT rows. Ordering ascending with a limit would
-        // hand back the oldest ones and draw a chart that stops hours ago.
-        ? { select: "id,company_id,price,reason,created_at", order: "id.desc", limit: TICK_CAP }
-        : { select: "id,company_id,price,reason,created_at", order: "id.asc",
-            params: { id: `gt.${lastTickId.current}` } };
+      // Both branches come back OLDEST FIRST. The full load walks backwards a
+      // page at a time so that an over-long history gives us the most RECENT
+      // TICK_CAP rows — ordering ascending with a limit would hand back the
+      // oldest ones and draw a chart that stops hours ago.
+      const tickLoad = full
+        ? fetchTickHistory(TICK_CAP)
+        : supabase.query("price_ticks", {
+            select: TICK_COLUMNS,
+            order: "id.asc",
+            limit: PAGE_MAX,
+            params: { id: `gt.${lastTickId.current}` },
+          });
 
       const [cos, state, newTicks, evts, tp] = await Promise.all([
         // `select=*` rather than a column list on purpose: naming `color`
@@ -149,7 +276,7 @@ export function useMarketData() {
         // the chart has a fallback for. Seven rows — the width costs nothing.
         supabase.query("companies", { select: "*", order: "sort_order" }),
         supabase.query("market_state", { select: "*" }),
-        supabase.query("price_ticks", tickQuery),
+        tickLoad,
         supabase.query("market_events", {
           select: "id,company_id,headline,pct_change,created_at",
           order: "created_at.desc", limit: 40,
@@ -165,9 +292,7 @@ export function useMarketData() {
       if (Array.isArray(tp)) setTape(tp);
 
       if (Array.isArray(newTicks) && newTicks.length) {
-        const rows = full
-          ? newTicks.map(tickRow).reverse()      // undo the id.desc
-          : newTicks.map(tickRow);
+        const rows = newTicks.map(tickRow);
         lastTickId.current = Math.max(lastTickId.current, ...rows.map((r) => r.id));
 
         setTicks((prev) => {

@@ -77,7 +77,7 @@ export const dashStyles = `
   .wexd-seg {
     padding: 9px 14px; min-height: 40px;
     font-family: inherit; font-size: 11px; letter-spacing: 1.5px;
-    text-transform: uppercase; cursor: pointer;
+    text-transform: uppercase; cursor: pointer; white-space: nowrap;
     background: none; border: none; color: var(--muted);
   }
   .wexd-seg + .wexd-seg { border-left: 1px solid var(--rule); }
@@ -298,5 +298,10 @@ export const dashStyles = `
     .wexd-tile-value { font-size: 28px; }
     .wexd-controls { gap: 8px; }
     .wexd-seg { padding: 9px 10px; letter-spacing: 1px; }
+    /* Four time windows, not three. On a 320px phone the widest label would
+       otherwise push the last button off the edge, so the group takes the row
+       to itself and the four share it evenly. */
+    .wexd-windows { flex: 1 1 100%; }
+    .wexd-windows .wexd-seg { flex: 1; padding: 9px 4px; letter-spacing: 0.5px; }
   }
 `;
