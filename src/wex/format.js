@@ -126,3 +126,11 @@ export function previewTrade({ price, liquidity, shares, side }) {
     total: Math.round(exec * q * 100) / 100,
   };
 }
+
+/** A wall clock, zero-padded, for the ticker screens: "09:05" and "09:05:33". */
+const pad2 = (n) => String(n).padStart(2, "0");
+export const hm = (t) => {
+  const d = new Date(t);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+};
+export const hms = (t) => `${hm(t)}:${pad2(new Date(t).getSeconds())}`;

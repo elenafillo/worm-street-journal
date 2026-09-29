@@ -238,7 +238,12 @@ export function useTicks(enabled = false, intervalMs = 15000) {
   return { ticks, loaded };
 }
 
-export function useMarketData() {
+/**
+ * @param slow  poll the standings and aggregate views as well (default true).
+ *              The #ticker screens read neither, and at three wall screens for
+ *              a three-day party the unused polls are about 15% of the egress.
+ */
+export function useMarketData({ slow = true } = {}) {
   const [companies, setCompanies] = useState([]);
   const [market, setMarket] = useState({});
   const [ticks, setTicks] = useState([]);
@@ -330,28 +335,28 @@ export function useMarketData() {
   useEffect(() => {
     let alive = true;
     (async () => {
-      await Promise.all([loadFast(true), loadSlow()]);
+      await Promise.all([loadFast(true), slow ? loadSlow() : null]);
       if (alive) setLoaded(true);
     })();
 
     const visible = () => document.visibilityState === "visible";
     const fast = setInterval(() => { if (visible()) loadFast(false); }, FAST_MS);
-    const slow = setInterval(() => { if (visible()) loadSlow(); }, SLOW_MS);
+    const slowId = slow ? setInterval(() => { if (visible()) loadSlow(); }, SLOW_MS) : 0;
 
     function onVisible() {
       if (!visible()) return;
       loadFast(false);
-      loadSlow();
+      if (slow) loadSlow();
     }
     document.addEventListener("visibilitychange", onVisible);
 
     return () => {
       alive = false;
       clearInterval(fast);
-      clearInterval(slow);
+      clearInterval(slowId);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [loadFast, loadSlow]);
+  }, [loadFast, loadSlow, slow]);
 
   return { companies, market, ticks, events, tape, board, health, stats, loaded, error };
 }

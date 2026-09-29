@@ -1,0 +1,330 @@
+// ============================================================
+// Random mode's scheduler — which windows open, where, and when
+// ============================================================
+// The pure part of #ticker?mode=random, kept out of the component so a whole
+// evening can be simulated with plain node against a fake clock. Nothing here
+// touches React, the DOM or the real clock: time is `now`, randomness is `rng`,
+// and the screen is `viewport`.
+//
+// The component calls step() a few times a second. Each call:
+//   1. starts closing windows whose time is up, and drops ones done closing
+//   2. opens windows the market has SUMMONED — a new headline, a big trade
+//   3. opens one AMBIENT window if one is due, there is room, and the screen
+//      is not already too full
+//
+// Layout is in CSS pixels, snapped to `grid` — a whole number of canvas pixels
+// — so the pixels of every window line up with every other's.
+
+// ---- tempo, at speed 1 ------------------------------------------------------
+const SPAWN_GAP_MS = [2000, 6000];     // between ambient windows
+const LIFE_MS = [8000, 20000];         // an ambient window's stay
+const SUMMONED_LIFE_MS = 25000;        // a headline or big-trade window's stay
+export const OPEN_MS = 400;            // unfold — NOT scaled: it is the look
+export const CLOSE_MS = 450;           // switch-off — likewise
+const REVEAL_BASE_MS = 1200;           // a line drawing itself in
+
+const MAX_COVER = 0.7;                 // never more of the screen than this
+const MAX_HIDDEN = 0.5;                // never hide more of a window than this
+const BIG_TRADE_PCT = 2;               // a trade moving a stock this much summons
+
+/** Line draw-in at a given speed: faster with the tempo, never a blur. */
+export function revealMs(speed) {
+  return Math.max(300, REVEAL_BASE_MS / speed);
+}
+
+// ---- seeded randomness -----------------------------------------------------
+/** mulberry32: small, fast, and the same sequence for the same `?seed=`. */
+export function makeRng(seed) {
+  let a = (Number(seed) >>> 0) || 1;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const between = (rng, [lo, hi]) => lo + rng() * (hi - lo);
+const pick = (rng, list) => list[Math.floor(rng() * list.length) % list.length];
+
+// ---- the catalogue -----------------------------------------------------------
+// `size` is [width range, height range] as fractions of the viewport. `weight`
+// is how often an ambient spawn picks it. `needs` is what must exist first.
+export const KINDS = {
+  line:     { weight: 4, size: [[0.30, 0.42], [0.30, 0.40]] },
+  trio:     { weight: 2, size: [[0.40, 0.52], [0.38, 0.50]], needs: "three" },
+  sparks:   { weight: 2, size: [[0.26, 0.34], [0.40, 0.55]] },
+  bars:     { weight: 2, size: [[0.26, 0.34], [0.32, 0.42]] },
+  big:      { weight: 3, size: [[0.20, 0.28], [0.24, 0.30]] },
+  headline: { weight: 1, size: [[0.34, 0.46], [0.22, 0.30]], needs: "events" },
+  tape:     { weight: 2, size: [[0.30, 0.38], [0.30, 0.38]], needs: "tape" },
+};
+
+const LINE_HOURS = [0.25, 1, 6];
+
+// ---- geometry ----------------------------------------------------------------
+function overlap(a, b) {
+  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  return w > 0 && h > 0 ? w * h : 0;
+}
+
+/**
+ * How much of the viewport the windows cover, counting overlaps once. Sampled
+ * on a 40×24 raster rather than solved exactly: this only gates a spawn, and a
+ * percent either way changes nothing anyone can see.
+ */
+export function coverage(rects, viewport) {
+  if (!rects.length) return 0;
+  const COLS = 40;
+  const ROWS = 24;
+  let hit = 0;
+  for (let r = 0; r < ROWS; r++) {
+    const y = ((r + 0.5) / ROWS) * viewport.h;
+    for (let c = 0; c < COLS; c++) {
+      const x = ((c + 0.5) / COLS) * viewport.w;
+      if (rects.some((q) => x >= q.x && x < q.x + q.w && y >= q.y && y < q.y + q.h)) hit++;
+    }
+  }
+  return hit / (COLS * ROWS);
+}
+
+const snap = (v, grid) => Math.round(v / grid) * grid;
+
+/** A window's size for `kind` on this viewport, snapped to the grid. */
+export function sizeFor(kind, viewport, grid, rng) {
+  // A portrait phone gets windows most of the width and a bit shorter —
+  // wide enough to read, small enough that three still overlap like a desk.
+  const narrow = viewport.w < 768;
+  const [wr, hr] = KINDS[kind].size;
+  // Floored, not rounded: a 390px phone minus margins is not a whole number of
+  // grid cells, and a window off the grid would not line up with the others.
+  const full = Math.floor((viewport.w - 2 * grid) / grid) * grid;
+  const w = snap(between(rng, narrow ? [0.6, 0.85] : wr) * viewport.w, grid);
+  const h = snap(between(rng, hr) * viewport.h * (narrow ? 0.72 : 1), grid);
+  return {
+    w: Math.max(grid * 6, Math.min(w, full)),
+    h: Math.max(grid * 4, Math.min(h, viewport.h - 2 * grid)),
+  };
+}
+
+/**
+ * Where to put a window of `size`: the least-overlapping of `tries` random
+ * grid positions, never one that hides more than half of a window already up.
+ * Returns null when every candidate would — the caller then waits.
+ */
+export function placeWindow(open, size, viewport, grid, rng, tries = 12) {
+  const maxX = Math.max(grid, viewport.w - size.w - grid);
+  const maxY = Math.max(grid, viewport.h - size.h - grid);
+  let best = null;
+  for (let i = 0; i < tries; i++) {
+    const c = {
+      x: Math.max(grid, snap(grid + rng() * (maxX - grid), grid)),
+      y: Math.max(grid, snap(grid + rng() * (maxY - grid), grid)),
+      ...size,
+    };
+    if (open.some((o) => overlap(c, o) / (o.w * o.h) > MAX_HIDDEN)) continue;
+    const score = open.reduce((sum, o) => sum + overlap(c, o), 0);
+    if (!best || score < best.score) best = { ...c, score };
+  }
+  return best && { x: best.x, y: best.y, w: best.w, h: best.h };
+}
+
+// ---- what goes in a window -----------------------------------------------------
+function available(kind, env) {
+  const need = KINDS[kind].needs;
+  if (need === "three") return env.companies.length >= 3;
+  if (need === "events") return env.events.length > 0;
+  if (need === "tape") return env.tape.length > 0;
+  return env.companies.length > 0;
+}
+
+// Kinds that show the whole market, not one company: two of the same at once
+// is not variety, it looks like a glitch. Single-company kinds can repeat —
+// with a different company each (contentFor prefers one not on screen).
+const WHOLE_MARKET = new Set(["sparks", "bars", "headline", "tape"]);
+
+function chooseKind(env, rng, open) {
+  const up = new Set(open.map((w) => w.kind));
+  const kinds = (env.only ? [env.only] : Object.keys(KINDS)).filter(
+    (k) => KINDS[k] && available(k, env) && !(WHOLE_MARKET.has(k) && up.has(k) && !env.only)
+  );
+  if (!kinds.length) return null;
+  const total = kinds.reduce((s, k) => s + KINDS[k].weight, 0);
+  let r = rng() * total;
+  for (const k of kinds) {
+    r -= KINDS[k].weight;
+    if (r <= 0) return k;
+  }
+  return kinds[kinds.length - 1];
+}
+
+/**
+ * The contents of a new window: which companies, which time window, and a
+ * title that reads like an old filename. Single-company kinds prefer a
+ * company no other window is already showing.
+ */
+function contentFor(kind, env, open, rng, pinned = {}) {
+  const ids = env.companies.map((c) => c.id);
+  const byId = new Map(env.companies.map((c) => [c.id, c]));
+  const shown = new Set(open.flatMap((w) => w.companyIds || []));
+  const fresh = ids.filter((id) => !shown.has(id));
+  const one = () => pinned.companyId || pick(rng, fresh.length ? fresh : ids);
+  const tick = (id) => byId.get(id)?.ticker || "???";
+
+  switch (kind) {
+    case "line": {
+      const id = one();
+      return { companyIds: [id], hours: pinned.hours || pick(rng, LINE_HOURS), title: `${tick(id)}.CHT` };
+    }
+    case "big": {
+      const id = one();
+      return { companyIds: [id], title: `${tick(id)}.NUM` };
+    }
+    case "trio": {
+      const pool = [...ids];
+      const three = [];
+      while (three.length < 3 && pool.length) three.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
+      return { companyIds: three, hours: 6, title: "TRIO.CHT" };
+    }
+    case "sparks": return { companyIds: [], hours: 1, title: "MARKET.SPK" };
+    case "bars": return { companyIds: [], title: "MOVERS.BAR" };
+    case "headline": return { companyIds: [], eventId: pinned.eventId ?? env.events[0]?.id, title: "NEWS.TXT" };
+    case "tape": return { companyIds: [], title: "TAPE.LOG" };
+    default: return { companyIds: [], title: "?" };
+  }
+}
+
+// ---- the step ----------------------------------------------------------------
+/** A fresh scheduler. Nothing opens until the first step() has seen the data. */
+export function initialState() {
+  return {
+    windows: [],        // { id, kind, x, y, w, h, z, openedAt, closeAt, closingAt, summoned, ...content }
+    nextId: 1,
+    nextZ: 1,
+    nextSpawnAt: 0,
+    primed: false,      // true once the existing events and trades are recorded
+    seenEvents: [],
+    seenTrades: [],
+  };
+}
+
+function lifeFor(summoned, speed, rng) {
+  const base = summoned ? SUMMONED_LIFE_MS : between(rng, LIFE_MS);
+  // Whatever the speed, a window stays long enough to unfold and draw its line.
+  return Math.max(base / speed, OPEN_MS + revealMs(speed) + 800);
+}
+
+/**
+ * What the market has summoned since the last step: a HEADLINE and a LINE for
+ * each new market event, and a BIG number for each trade that moved its stock
+ * at least BIG_TRADE_PCT. On the very first step everything already there is
+ * recorded as seen and nothing is summoned — a page load is not news.
+ */
+function detectSummons(state, env) {
+  const seenE = new Set(state.seenEvents);
+  const seenT = new Set(state.seenTrades);
+  const out = [];
+  if (state.primed) {
+    for (const ev of env.events) {
+      if (seenE.has(ev.id)) continue;
+      out.push({ kind: "headline", pinned: { eventId: ev.id } });
+      const co = env.companies.find((c) => c.id === ev.company_id);
+      if (co) out.push({ kind: "line", pinned: { companyId: co.id, hours: 1 } });
+    }
+    for (const tr of env.tape) {
+      if (seenT.has(tr.id)) continue;
+      const before = Number(tr.price_before);
+      const after = Number(tr.price_after);
+      if (!before || !Number.isFinite(after)) continue;
+      if (Math.abs((after / before - 1) * 100) < BIG_TRADE_PCT) continue;
+      const co = env.companies.find((c) => c.ticker === tr.ticker);
+      if (co) out.push({ kind: "big", pinned: { companyId: co.id } });
+    }
+  }
+  // Bounded memory: the feeds themselves are capped (40 events, 30 trades).
+  return {
+    summons: out,
+    seenEvents: env.events.map((e) => e.id).slice(0, 200),
+    seenTrades: env.tape.map((t) => t.id).slice(0, 200),
+  };
+}
+
+/**
+ * Advance the scheduler to `now`.
+ *
+ * @param env  { viewport:{w,h}, grid, speed, max, companies, events, tape, only }
+ * @returns    the new state (the input is never mutated)
+ */
+export function step(state, now, env, rng) {
+  const speed = env.speed || 1;
+  const max = Math.max(1, env.max || 5);
+
+  // 1. Close what is due; forget what has finished closing. A window that no
+  //    longer fits — the screen was resized, or the phone turned sideways —
+  //    is due now: it closes, and the next spawn fills the new shape.
+  const outside = (w) => w.x + w.w > env.viewport.w || w.y + w.h > env.viewport.h;
+  let windows = state.windows
+    .filter((w) => !(w.closingAt && now - w.closingAt >= CLOSE_MS))
+    .map((w) => (!w.closingAt && (now >= w.closeAt || outside(w)) ? { ...w, closingAt: now } : w));
+
+  let { nextId, nextZ, nextSpawnAt } = state;
+  const live = () => windows.filter((w) => !w.closingAt);
+
+  const open = (kind, pinned, summoned) => {
+    const size = sizeFor(kind, env.viewport, env.grid, rng);
+    const content = contentFor(kind, env, live(), rng, pinned);
+    // A summoned window must appear: if nowhere keeps the half-hidden rule,
+    // fall back to the least-bad spot rather than drop the news.
+    const rect =
+      placeWindow(live(), size, env.viewport, env.grid, rng) ||
+      (summoned ? placeWindow([], size, env.viewport, env.grid, rng) : null);
+    if (!rect) return false;
+    // The cap counts the newcomer: an ambient window that would take the screen
+    // past it waits for the next slot. Summoned ones are news and go anyway.
+    if (!summoned && coverage([...live(), rect], env.viewport) > MAX_COVER) return false;
+    windows.push({
+      id: nextId++,
+      kind,
+      ...rect,
+      ...content,
+      // Summoned windows always stack above ambient ones.
+      z: (summoned ? 10_000 : 0) + nextZ++,
+      summoned,
+      openedAt: now,
+      closeAt: now + lifeFor(summoned, speed, rng),
+      closingAt: null,
+    });
+    return true;
+  };
+
+  // 2. Summons. At the ceiling, the oldest ambient window makes way.
+  const { summons, seenEvents, seenTrades } = detectSummons(state, env);
+  for (const s of summons) {
+    if (live().length >= max) {
+      const oldest = live().filter((w) => !w.summoned).sort((a, b) => a.openedAt - b.openedAt)[0];
+      if (oldest) windows = windows.map((w) => (w === oldest ? { ...w, closingAt: now } : w));
+    }
+    open(s.kind, s.pinned, true);
+  }
+
+  // 3. One ambient window, if one is due and there is room for it.
+  if (state.primed && now >= nextSpawnAt && env.companies.length) {
+    if (live().length < max) {
+      const kind = chooseKind(env, rng, live());
+      if (kind) open(kind, {}, false);
+    }
+    nextSpawnAt = now + between(rng, SPAWN_GAP_MS) / speed;
+  }
+
+  return {
+    windows,
+    nextId,
+    nextZ,
+    nextSpawnAt,
+    primed: state.primed || env.companies.length > 0,
+    seenEvents,
+    seenTrades,
+  };
+}

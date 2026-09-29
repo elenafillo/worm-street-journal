@@ -29,7 +29,8 @@ which also settles dashboard-vs-board, the nav, and the light sheet.
 | 6.5 | In-game explanations (gate · trade desk · wall dialog) | ✅ built |
 | 6.6 | **Price drift** — the weather (§5.1) | ✅ installed and drifting · 🟡 re-run `drift.sql` to add the `pg_cron` heartbeat |
 | 7 | **The price board** — `#board`, seven enormous rows + sparklines. Optional; §8 explains why it is its own screen | ⬜ not started |
-| 7.5 | **The ticker** — `#ticker`, a dark 80s terminal: quotes + a combined tape (trades, news, Fed sets, drift) on the left, a pixel-canvas 6h chart of three rotating companies on the right. Needs `supabase/ticker.sql` (adds `price_before`/`price_after` to `trade_tape`). Later: a pop-up `?mode=random` built on `PixelChart` + `pixelFont` | ✅ built · 🟡 run `ticker.sql` |
+| 7.5 | **The ticker** — `#ticker`, a dark 80s terminal: quotes + a scrolling tape on the left, a pixel-canvas 6h chart of three rotating companies on the right (§10) | ✅ built, committed, `ticker.sql` run |
+| 7.6 | **The ticker's random mode** — `#ticker?mode=random`, pixel windows popping open and shut over a black field, each one a different view of the market (§10.2) | ✅ R1–R5 built, committed · 🟡 R6: tune on the wall |
 | 8 | Dry run, tune `liquidity`, update HANDOFF.md | ⬜ not started |
 
 ### What has NOT been verified
@@ -42,7 +43,13 @@ Two limits on this machine, worth knowing before trusting anything below as
    production, where Vercel holds the real one — but it means `add_marker`,
    `delete_event`, `set_drift` and `drift_now` have been read and reasoned
    about, never run.
-2. **No headless browser.** Layout and interaction are checked by eye, by you.
+2. ~~**No headless browser.**~~ Headless Chrome works here, driven over the
+   DevTools protocol from a throwaway node script (not in the repo). `#ticker` was
+   checked that way: screenshots at 1920 and 390 wide, plus measured layout and
+   animation state. Chrome's one-shot `--screenshot` flag is **not** trustworthy
+   for this app: it froze CSS animations and laid the phone view out wrong, so
+   use a real page session instead. Feel, such as scroll smoothness, still needs
+   your eyes.
 
 What *is* machine-verified: `npm run build` and `npm run lint` clean on every
 new file (the 9 remaining lint errors are pre-existing, in `App.jsx` and the two
@@ -70,7 +77,9 @@ Paste a file, Run (Ctrl+Enter), then open a new query tab for the next one.
 6. [ ] **Re-paste [supabase/smoke_test.sql](supabase/smoke_test.sql)** once — check 5 asserted the
    round-trip spread was under 1,000 ⌀; it is exactly 1,080 ⌀ (`q·p·x²/2`). The test was wrong,
    not the engine. Low priority: it only replaces the stored test function.
-7. [ ] Edit the seven companies in the Table Editor — real names, tickers, CEO names, blurbs.
+7. [x] ~~**[supabase/ticker.sql](supabase/ticker.sql)**~~ — `trade_tape` now returns `price_before` /
+   `price_after`, so `#ticker` shows how far each trade moved its stock. Folded into `schema.sql`.
+8. [ ] Edit the seven companies in the Table Editor — real names, tickers, CEO names, blurbs.
    Currently placeholders: ANL MLC CST BUR SLM CMP SEG, all at 100,000 ⌀.
 
 Expect four `security_definer_view` warnings in Supabase's database linter, on
@@ -1079,3 +1088,153 @@ Roughly in order of how much each would tell you mid-party:
 16. **Colour survives reordering:** change one company's `sort_order` in the GM panel. Every line must keep its hue.
 17. **Poll behaviour:** leave the dashboard open for ten minutes with devtools on the network tab. Steady ~2–3 req/s, tick responses staying small rather than growing, no skeleton flash on refetch.
 18. **Nav on a phone:** five labels on a 320px viewport, one line, no wrap.
+
+---
+
+## 10. The ticker (`#ticker`)
+
+A third wall screen: the exchange as an 80s trading terminal. Green phosphor on
+black, a real low-resolution canvas, scanlines. It sits beside `#wex` and the
+planned `#board`, and changes neither. Nothing on it can be clicked, so it
+draws no nav bar: point a projector at it and walk away.
+
+### 10.1 What is built
+
+| Part | Where | Notes |
+|---|---|---|
+| Page and rotation | `src/wex/TickerDash.jsx` | Quotes, tape and chart. Three chart **slots** with fixed colours (cyan, magenta, yellow). Every `rotate` seconds one slot, round-robin, gets a company not on screen, so a company keeps its colour while it is up |
+| Tape and slot maths | `src/wex/tickerFeed.js` | Pure, node-checkable. `buildFeed` merges `trade_tape`, `market_events` and `price_ticks`. Each drift run collapses to one row; moves under 0.05% are dropped, since they would print as "0.0%". `gm_event` ticks are not listed, because the headline row already covers them |
+| The chart | `src/wex/PixelChart.jsx` | A canvas at about ¼ resolution, scaled up with `image-rendering: pixelated`, drawn only with integer `fillRect`s. Reuses chartSeries.js unchanged. `yMode` is `abs` (share price, the default) or `pct` (vs open). Each chart pixel is a whole number of *device* pixels, so a 125%-scaled screen does not shimmer |
+| Bitmap font | `src/wex/pixelFont.js` | 5×7, so canvas text sits on the same grid as the lines |
+| Styles | `src/wex/tickerStyles.js` | All `tkr-` prefixed. Green and red mean up and down **only**; chart lines never use them |
+| Link params | `src/wex/hashParams.js` | Shared with `#wex` now |
+| SQL | `supabase/ticker.sql` | Two columns appended to `trade_tape`. Run and verified |
+
+Link: `#ticker?rotate=90&px=4&hours=6&y=abs`. Every param is optional.
+`y=pct` brings back the percent-vs-open chart. `px` defaults to 4 on a wall
+and 2 on a phone.
+
+Tape rows too long for the panel glide sideways (`Scroller`); drift rows always
+do. The motion is smooth, not stepped: 3px steps at a slow speed came out at
+about 12 a second, which read as stutter rather than retro.
+
+### 10.2 Random mode — the plan
+
+**The idea.** `#ticker?mode=random` is its own screen, random all the time: a black CRT field.
+Pixel-bordered windows open, each with one readable view of the market, stay a
+few seconds, then snap shut. Three to five are up at once, overlapping like a busy
+1985 desktop. It is abstract to look at, but every window is real, live data.
+
+**Ambient, plus event-driven.** Most windows are ambient: a random kind, a
+random company. But the market also *summons* windows, which is what keeps this
+from being a screensaver:
+
+| Trigger | Window it opens |
+|---|---|
+| New `market_events` row | HEADLINE in amber, plus a LINE window for that company, both on top and kept longer |
+| A trade that moves a stock ≥ 2% | BIG NUMBER for that stock, blinking ▲ / ▼ |
+| A quiet minute | Nothing extra. Ambient windows carry on |
+
+**Window kinds** (a catalogue, so adding one is one entry):
+
+| Kind | Shows | Renderer |
+|---|---|---|
+| LINE | One company's price over a random window (15m / 1h / 6h) | `PixelChart` with a single slot |
+| TRIO | Three companies, as on the fixed screen | `PixelChart` |
+| SPARKS | All seven as tiny sparklines, no axes | `PixelChart` with axes off, ×7 |
+| BARS | %Δ vs open for all seven, horizontal bars | new `PixelBars` |
+| BIG NUMBER | One price, pixel font at 4×, ▲▼ | new `PixelNumber` |
+| HEADLINE | Latest market event | DOM, VT323 |
+| TAPE | Last five feed rows | DOM, reuses `FeedRow` |
+
+Title bars read like old filenames (`ANL.CHT`, `MARKET.BAR`, `NEWS.TXT`), with a
+close box that is only decoration.
+
+**Motion.**
+- **Open:** the frame unfolds from its centre in about 8 chunky `clip-path`
+  steps. The canvas inside then draws its line in, which PixelChart already does.
+- **Close:** a CRT switch-off. The window collapses to a horizontal line, then
+  to a dot, then goes.
+- **Stacking:** the newest window is on top, and a summoned window always opens
+  above ambient ones.
+- **Reduced motion:** windows just appear and disappear.
+
+**Layout rules.**
+- **Grid:** positions and sizes snap to a grid of whole chart pixels, so every
+  window's pixels line up with every other's.
+- **Placement:** pick the candidate spot, out of about a dozen, that overlaps
+  least. Overlap is allowed, but no window may hide more than about half of
+  another. That keeps the busy look without hiding everything.
+- **Screen coverage:** capped at about 70%, so there is always black to breathe.
+
+**Architecture.**
+- **`src/wex/popScheduler.js`:** pure and node-checkable.
+  - `nextSpawn(state, now, rng, speed)` returns when to open the next window,
+    what kind it is (weighted) and how long it lives.
+  - `placeWindow(open, size, viewport, rng)` returns a position.
+  - `summons(prevData, data)` returns the event-driven specs.
+  - All randomness comes from a seeded `rng`, and `?seed=` pins it, so a
+    screenshot can be reproduced.
+- **`src/wex/usePixelCanvas.js`:** the sizing and redraw loop, extracted from
+  `PixelChart` so the bars and big number do not copy it. PixelChart then keeps
+  only its `draw`. This is the one refactor of built code, and the fixed screen
+  must look identical afterwards.
+- **`src/wex/PopWindow.jsx`:** the frame, title bar and open/close animation.
+- **`src/wex/TickerRandom.jsx`:** the field, the scheduler clock and the stack
+  of open windows. It takes the same `useMarketData()` output as the fixed
+  screen and passes it down. A window pins its company when it opens but always
+  reads live prices.
+- **`PixelChart` options:** `axes` and `legend` flags, defaulting to on, for the
+  small windows.
+
+**Stages.**
+
+| Stage | Work | Check |
+|---|---|---|
+| R1 | Extract `usePixelCanvas`; add the `axes` / `legend` flags; `useMarketData({ slow: false })` for both ticker screens | Fixed `#ticker` screenshot unchanged at 1920 and 390; the network tab shows no `leaderboard` / `market_health` / `company_stats` polls on `#ticker`, and `#wex` still has them |
+| R2 | `popScheduler.js` | Node script: coverage cap holds, no window more than half hidden, the same seed gives the same sequence |
+| R3 | `PopWindow` + `TickerRandom` with a placeholder body; `?mode=random`, `?seed=`, `?speed=`, `?max=` | Watch it for five minutes at `speed=1` and at `speed=4`: windows open, close and never pile up past `max` |
+| R4 | The seven kinds | One screenshot per kind, forced with `?only=bars` and so on |
+| R5 | Summons | Fire a GM event and place a big trade; the right windows open on top |
+| R6 | Tune on the real wall; phone (at most two windows, full width) | You, across the room |
+
+**Progress.** R1–R5 are built:
+- **R1:** the fixed screen is unchanged in screenshots, and `#ticker` no longer polls the standings views.
+- **R2:** the scheduler passes a simulated two hours on a wall and a phone, at speeds 0.25, 1 and 4.
+- **R3/R4:** every kind was screenshotted with `?only=`. At `speed=4`, 20 windows opened in 20 s, never more than 5 at once, with no page errors.
+- **Summons** are checked in the simulation only: firing a real GM event would have moved the live market.
+
+Added after the plan: a whole-market kind (sparks, bars, headline, tape) is never open twice at once, because two identical MOVERS.BAR windows side by side looked like a glitch.
+
+**Settled.**
+
+| Question | Decision |
+|---|---|
+| Own screen, or over the fixed ticker? | **Its own screen**, `#ticker?mode=random` |
+| Fixed, or cycling with the fixed screen? | **Always random.** No cycle mode |
+| How abstract? | **Readable.** Every window has a title and real labels, even when the speed makes it hard to read in time |
+| Leaderboard windows? | **None.** Market data only; no player names pop up |
+| Speed? | **Set in the link**; see below |
+
+**The speed dial.** `?speed=` multiplies the whole tempo. `1` is the default,
+`2` is twice as frantic and `0.5` is half. It is clamped to 0.25–4.
+
+| At `speed=1` | Value | Scales with speed? |
+|---|---|---|
+| Gap between new windows | 2–6 s, random | yes, divided by speed |
+| A window's lifetime | 8–20 s, random | yes |
+| A summoned window's lifetime | 25 s | yes |
+| Windows open at once | 3–5 | no. `?max=` sets the ceiling instead (default 5) |
+| Open / close animation | ~0.4 s | **no**. The unfold and switch-off are the look; sped up, they stop reading as a CRT |
+| Line draw-in inside a window | 1.2 s | yes, but never under 0.3 s |
+
+A window never shuts before its line has finished drawing, whatever the speed.
+
+**Database load.** Random mode costs the **same** as the fixed ticker: one
+`useMarketData()` for the page, and every window draws from it. Windows never
+fetch. Measured on the live project, one open screen pulls about 2.4 KB of data
+every 3 s and 1 KB every 6 s, compressed. That is roughly 8–9 MB an hour
+including HTTP headers. Supabase does not charge per request; the thing to watch
+is **egress** on the plan's monthly allowance. Neither ticker screen reads the
+leaderboard or the aggregate views, so R1 lets them skip those slow polls
+(`useMarketData({ slow: false })`), which cuts about 15%.

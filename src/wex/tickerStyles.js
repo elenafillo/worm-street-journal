@@ -211,11 +211,179 @@ export const tickerStyles = `
   }
 
   /* ---- a phone, or a narrow window: stack, and let it scroll ------------ */
-  @media (max-width: 768px) {
+  /* ---- a phone, either way up, or any small window: stack and scroll ----
+     Chart, then quotes, then the tape. Landscape counts: a sideways phone is
+     wider than 768px but only ~390px tall, and the two-column wall layout
+     squeezed the tape to nothing. */
+  @media (max-width: 768px), (max-height: 500px) {
     .tkr { overflow-y: auto; grid-template-rows: auto auto; font-size: 16px; padding: 0.8em 16px; }
     .tkr-head { flex-wrap: wrap; row-gap: 0.2em; font-size: 1.1em; }
     .tkr-main { grid-template-columns: minmax(0, 1fr); }
     .tkr-right { order: -1; height: 55vh; }
-    .tkr-tape { max-height: 60vh; }
+    /* A real height, not a leftover: as the flexible last panel of a page
+       that scrolls, it was otherwise given whatever was left — about two rows. */
+    .tkr-tape { flex: none; height: 70vh; }
+    /* On the wall every panel may shrink to fit one screen; here the page
+       scrolls instead, so nothing should — the quotes were crushed to 17px. */
+    .tkr-main, .tkr-left, .tkr-quotes { min-height: auto; flex-shrink: 0; }
+  }
+  @media (max-height: 500px) {
+    .tkr-right { height: 85vh; }
+  }
+
+  /* ======================================================================
+     Random mode (#ticker?mode=random) — TickerRandom, PopWindow
+     ======================================================================
+     --rnd-grid  the snap grid the scheduler places windows on (8 canvas px)
+     --rnd-px    one canvas pixel, in CSS px — borders are exactly one      */
+  .tkr.rnd {
+    grid-template-rows: minmax(0, 1fr) auto;
+    padding: 0;
+    gap: 0;
+  }
+  .rnd-field {
+    position: relative;
+    overflow: hidden;
+    /* Its own stacking context, under the scanlines (z-index 2 on .tkr::after)
+       however high a window's z climbs. */
+    z-index: 1;
+    isolation: isolate;
+    /* A faint dot at every grid crossing: the board the windows snap to. */
+    background-image: radial-gradient(circle, var(--tkr-faint) 1.5px, transparent 2px);
+    background-size: var(--rnd-grid) var(--rnd-grid);
+    background-position: calc(var(--rnd-grid) / -2) calc(var(--rnd-grid) / -2);
+  }
+
+  .rnd-win {
+    position: absolute;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    background: var(--tkr-bg);
+    border: var(--rnd-px) solid var(--tkr-dim);
+    /* A hard pixel drop shadow, two steps deep — no blur anywhere. */
+    box-shadow:
+      var(--rnd-px) var(--rnd-px) 0 0 #000,
+      calc(var(--rnd-px) * 2) calc(var(--rnd-px) * 2) 0 0 var(--tkr-faint);
+    /* \`backwards\`, not \`both\`: once open, the clip-path must go, or it would
+       clip the drop shadow for the window's whole life. */
+    animation: rnd-open var(--rnd-open) steps(6) backwards;
+  }
+  .rnd-win.closing { animation: rnd-close var(--rnd-close) forwards; }
+  .rnd-win.summoned { border-color: var(--tkr-amber); }
+
+  /* A striped title bar with the name knocked out in a black box, like a
+     1984 desktop. Exactly one grid cell tall with the border, so the body —
+     and its canvas — starts on the grid. */
+  .rnd-title {
+    flex: none;
+    height: calc(var(--rnd-grid) - var(--rnd-px));
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    padding: 0 0.4em;
+    overflow: hidden;
+    white-space: nowrap;
+    font-size: calc(var(--rnd-grid) * 0.7);
+    line-height: 1;
+    text-shadow: none;
+    background: repeating-linear-gradient(
+      to bottom,
+      var(--tkr-dim) 0 var(--rnd-px),
+      transparent var(--rnd-px) calc(var(--rnd-px) * 2)
+    );
+  }
+  .rnd-title-name,
+  .rnd-title-meta {
+    background: var(--tkr-bg);
+    color: var(--tkr-fg);
+    padding: 0 0.35em;
+  }
+  .rnd-title-meta { color: var(--tkr-dim); }
+  .rnd-title-box { margin-left: auto; color: var(--tkr-dim); background: var(--tkr-bg); padding: 0 0.2em; }
+  .rnd-win.summoned .rnd-title {
+    background: repeating-linear-gradient(
+      to bottom,
+      var(--tkr-amber) 0 var(--rnd-px),
+      transparent var(--rnd-px) calc(var(--rnd-px) * 2)
+    );
+  }
+  .rnd-win.summoned .rnd-title-name {
+    color: var(--tkr-amber);
+    animation: tkr-blink 1.06s steps(1) 4;
+  }
+
+  .rnd-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    /* The DOM windows size their text to the window, not the screen. */
+    container-type: size;
+  }
+
+  /* HEADLINE */
+  .rnd-headline {
+    padding: 0.25em 0.5em;
+    color: var(--tkr-amber);
+    /* Sized by BOTH axes: by height alone, a long headline in a narrow
+       window wrapped to a third line and lost it off the bottom. */
+    font-size: clamp(14px, min(26cqh, 8cqw), 72px);
+    line-height: 0.95;
+    overflow: hidden;
+  }
+  .rnd-kicker {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5em;
+    font-size: max(11px, 0.45em);
+    margin-bottom: 0.15em;
+    color: var(--tkr-text);
+  }
+
+  /* TAPE */
+  .rnd-tape {
+    list-style: none;
+    margin: 0;
+    padding: 0.3em 0.5em;
+    /* Seven rows at 1.1 line-height, plus padding, inside the window. */
+    font-size: clamp(11px, 10.5cqh, 32px);
+    overflow: hidden;
+  }
+
+  .rnd-status {
+    position: relative;
+    z-index: 3; /* above the vignette, so it reads to the corners */
+    display: flex;
+    align-items: baseline;
+    gap: 1.5em;
+    padding: 0.25em 1em 0.35em;
+    border-top: 2px solid var(--tkr-dim);
+    color: var(--tkr-dim);
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .rnd-status-name { color: var(--tkr-fg); }
+
+  /* Open: unfold from the centre in six chunky steps. */
+  @keyframes rnd-open {
+    from { clip-path: inset(50% 50% 50% 50%); }
+    to   { clip-path: inset(0 0 0 0); }
+  }
+  /* Close: a CRT switching off — flare, squash to a bright line, then a dot. */
+  @keyframes rnd-close {
+    0%   { clip-path: inset(0 0 0 0); filter: none; animation-timing-function: steps(3); }
+    45%  { clip-path: inset(calc(50% - var(--rnd-px)) 0 calc(50% - var(--rnd-px)) 0);
+           filter: brightness(2.5); animation-timing-function: steps(3); }
+    80%  { clip-path: inset(calc(50% - var(--rnd-px)) calc(50% - var(--rnd-px)));
+           filter: brightness(3); animation-timing-function: steps(1); }
+    100% { clip-path: inset(50% 50%); filter: brightness(3); }
+  }
+
+  @media (max-width: 768px), (max-height: 500px) {
+    .tkr.rnd { overflow: hidden; padding: 0; font-size: 14px; grid-template-rows: minmax(0, 1fr) auto; }
+    .rnd-status { gap: 0.8em; padding: 0.25em 16px 0.35em; }
+    .rnd-status-name { display: none; }
   }
 `;
