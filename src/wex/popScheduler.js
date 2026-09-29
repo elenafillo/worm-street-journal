@@ -15,6 +15,8 @@
 // Layout is in CSS pixels, snapped to `grid` — a whole number of canvas pixels
 // — so the pixels of every window line up with every other's.
 
+import { eventMoves, recentEvents, FLASH_WINDOW_MS } from "./tickerFeed.js";
+
 // ---- tempo, at speed 1 ------------------------------------------------------
 const SPAWN_GAP_MS = [2000, 6000];     // between ambient windows
 const LIFE_MS = [8000, 20000];         // an ambient window's stay
@@ -31,6 +33,25 @@ const WALL_RULES = { maxCover: 0.7, maxHidden: 0.5, spread: true };
 const PHONE_RULES = { maxCover: 0.85, maxHidden: 0.5, spread: false };
 export const rulesFor = (viewport) => (viewport.w < 768 ? PHONE_RULES : WALL_RULES);
 const BIG_TRADE_PCT = 2;               // a trade moving a stock this much summons
+
+// ---- news, by age -------------------------------------------------------------
+// Each headline from the last three hours has its own clock. Fresh news comes
+// back often and old news rarely: the gap between showings doubles every
+// NEWS_HALF_LIFE_MS of the headline's age.
+//
+//   just out  30 s    ·   20 min  1 min    ·   40 min  2 min
+//   1 h       4 min   ·   2 h     32 min   ·   past 3 h, never
+//
+// This is the ONLY way a headline window appears, beside the instant summons
+// when one breaks — headlines are not in the ambient draw, so how often the
+// news shows is decided here and nowhere else.
+const NEWS_BASE_MS = 30_000;
+const NEWS_HALF_LIFE_MS = 20 * 60_000;
+
+/** The gap until a headline of this age shows again, at this speed. */
+export function newsInterval(ageMs, speed = 1) {
+  return (NEWS_BASE_MS * 2 ** (Math.max(0, ageMs) / NEWS_HALF_LIFE_MS)) / speed;
+}
 
 /** Line draw-in at a given speed: faster with the tempo, never a blur. */
 export function revealMs(speed) {
@@ -62,7 +83,8 @@ export const KINDS = {
   sparks:   { weight: 2, size: [[0.26, 0.34], [0.40, 0.55]] },
   bars:     { weight: 2, size: [[0.26, 0.34], [0.32, 0.42]] },
   big:      { weight: 3, size: [[0.20, 0.28], [0.24, 0.30]] },
-  headline: { weight: 1, size: [[0.34, 0.46], [0.22, 0.30]], needs: "events" },
+  // Weight 0: headlines are scheduled by age (newsInterval), never drawn at random.
+  headline: { weight: 0, size: [[0.34, 0.46], [0.22, 0.30]], needs: "events" },
   tape:     { weight: 2, size: [[0.30, 0.38], [0.30, 0.38]], needs: "tape" },
 };
 
@@ -156,7 +178,8 @@ const WHOLE_MARKET = new Set(["sparks", "bars", "headline", "tape"]);
 function chooseKind(env, rng, open) {
   const up = new Set(open.map((w) => w.kind));
   const kinds = (env.only ? [env.only] : Object.keys(KINDS)).filter(
-    (k) => KINDS[k] && available(k, env) && !(WHOLE_MARKET.has(k) && up.has(k) && !env.only)
+    (k) => KINDS[k] && available(k, env) && (env.only || KINDS[k].weight > 0)
+      && !(WHOLE_MARKET.has(k) && up.has(k) && !env.only)
   );
   if (!kinds.length) return null;
   const total = kinds.reduce((s, k) => s + KINDS[k].weight, 0);
@@ -191,6 +214,10 @@ function contentFor(kind, env, open, rng, pinned = {}) {
       return { companyIds: [id], title: `${tick(id)}.NUM` };
     }
     case "trio": {
+      // Summoned by a several-company event: exactly the companies it moved.
+      if (pinned.companyIds?.length) {
+        return { companyIds: pinned.companyIds.slice(0, 4), hours: pinned.hours || 1, title: "NEWS.CHT" };
+      }
       const pool = [...ids];
       const three = [];
       while (three.length < 3 && pool.length) three.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
@@ -215,6 +242,7 @@ export function initialState() {
     primed: false,      // true once the existing events and trades are recorded
     seenEvents: [],
     seenTrades: [],
+    newsNext: {},       // event id → when its headline is next due
   };
 }
 
@@ -238,8 +266,12 @@ function detectSummons(state, env) {
     for (const ev of env.events) {
       if (seenE.has(ev.id)) continue;
       out.push({ kind: "headline", pinned: { eventId: ev.id } });
-      const co = env.companies.find((c) => c.id === ev.company_id);
-      if (co) out.push({ kind: "line", pinned: { companyId: co.id, hours: 1 } });
+      // The companies it moved: one gets its own chart, several share one.
+      const ids = eventMoves(ev)
+        .map((m) => m.company_id)
+        .filter((id) => id && env.companies.some((c) => c.id === id));
+      if (ids.length === 1) out.push({ kind: "line", pinned: { companyId: ids[0], hours: 1 } });
+      if (ids.length > 1) out.push({ kind: "trio", pinned: { companyIds: ids, hours: 1 } });
     }
     for (const tr of env.tape) {
       if (seenT.has(tr.id)) continue;
@@ -309,12 +341,39 @@ export function step(state, now, env, rng) {
 
   // 2. Summons. At the ceiling, the oldest ambient window makes way.
   const { summons, seenEvents, seenTrades } = detectSummons(state, env);
+  const newsNext = {};
   for (const s of summons) {
     if (live().length >= max) {
       const oldest = live().filter((w) => !w.summoned).sort((a, b) => a.openedAt - b.openedAt)[0];
       if (oldest) windows = windows.map((w) => (w === oldest ? { ...w, closingAt: now } : w));
     }
     open(s.kind, s.pinned, true);
+    // Breaking news has just been shown: its clock starts from here.
+    if (s.kind === "headline") newsNext[s.pinned.eventId] = now + newsInterval(0, speed);
+  }
+
+  // 2½. The news clocks. At most one headline per step, so three due at once
+  //     arrive a beat apart rather than as a pile.
+  if (state.primed) {
+    let shown = false;
+    for (const ev of recentEvents(env.events, now, FLASH_WINDOW_MS)) {
+      const gap = newsInterval(now - ev.t, speed);
+      const due = newsNext[ev.id] ?? state.newsNext?.[ev.id];
+      if (due === undefined) {
+        // First sight — a page load, or news older than the screen: stagger
+        // across one interval so a busy evening does not open all at once.
+        newsNext[ev.id] = now + rng() * gap;
+        continue;
+      }
+      newsNext[ev.id] = due;
+      if (shown || now < due) continue;
+      const up = live().some((w) => w.kind === "headline" && w.eventId === ev.id);
+      // Not already on screen and no room: try again next step, not in a gap.
+      if (up || (live().length < max && open("headline", { eventId: ev.id }, false))) {
+        newsNext[ev.id] = now + gap;
+        shown = !up;
+      }
+    }
   }
 
   // 3. One ambient window, if one is due and there is room for it.
@@ -334,5 +393,7 @@ export function step(state, now, env, rng) {
     primed: state.primed || env.companies.length > 0,
     seenEvents,
     seenTrades,
+    // Only recent events are carried: anything else fell out of the window.
+    newsNext,
   };
 }

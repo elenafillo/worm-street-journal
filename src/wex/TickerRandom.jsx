@@ -33,7 +33,8 @@ const STEP_MS = 250;
 // One colour per LINE window, cycled by window id. Not green or red — here too
 // those mean up and down only.
 const LINE_COLORS = [["#00e5ff"], ["#ff3df2"], ["#ffe600"]];
-const TRIO_COLORS = ["#00e5ff", "#ff3df2", "#ffe600"];
+// A fourth for a news chart of four companies: violet, still not green or red.
+const TRIO_COLORS = ["#00e5ff", "#ff3df2", "#ffe600", "#b18cff"];
 
 const hoursLabel = (h) => (h < 1 ? `${Math.round(h * 60)}M` : `${h}H`);
 

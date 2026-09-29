@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { formatWormcoin, hm } from "./format.js";
+import { eventMoves } from "./tickerFeed.js";
 
 // ============================================================
 // Tape rows and headlines — shared by the fixed ticker and random mode
@@ -93,8 +94,12 @@ export function FeedRow({ row }) {
           {time}
           <span className="tkr-tag news">NEWS</span>
           <Scroller>
-            <span className="tkr-what">{row.ticker}</span>
-            <Move pct={row.pct} />
+            {row.moves.map((m) => (
+              <span key={m.ticker} className="tkr-drift-move">
+                <span className="tkr-what">{m.ticker}</span>
+                <Move pct={m.pct} />
+              </span>
+            ))}
             <span className="tkr-headline">{String(row.headline || "").toUpperCase()}</span>
           </Scroller>
         </li>
@@ -159,15 +164,18 @@ function AnnouncedClock({ t }) {
  */
 export function HeadlineBody({ event, byId }) {
   if (!event) return null;
-  const ticker = event.company_id ? byId.get(event.company_id)?.ticker || "?" : "MARKET";
-  const pct = Number(event.pct_change);
   const t = event.t ?? new Date(event.created_at).getTime();
   return (
     <div className="rnd-headline">
       <div className="rnd-kicker">
         <span className="tkr-tag news">NEWS</span>
-        <span>{ticker}</span>
-        <Move pct={Number.isFinite(pct) && pct !== 0 ? pct : null} />
+        {/* Up to four: what the FED panel allows, and what fits this line. */}
+        {eventMoves(event).map((m) => (
+          <span key={m.company_id || "market"} className="rnd-kicker-move">
+            <span>{m.company_id ? byId.get(m.company_id)?.ticker || "?" : "MARKET"}</span>
+            <Move pct={m.pct} />
+          </span>
+        ))}
         <AnnouncedClock t={t} />
       </div>
       <div className="rnd-hl">{String(event.headline || "").toUpperCase()}</div>

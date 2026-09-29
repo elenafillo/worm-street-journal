@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { formatWormcoin, formatPct, timeLabel } from "./format.js";
 import { colorOf } from "./palette.js";
+import { eventMoves } from "./tickerFeed.js";
 import {
   stepPath, buildSeries, niceTicks, yDomain, spreadLabels, buildTimeScale, downsample,
   windowStart,
@@ -320,11 +321,14 @@ export default function PriceChart({
               <span className="wexd-event-badge">{m.n}</span>
               <span className="wexd-event-time">{timeLabel(m.t, model.span)}</span>
               <span className="wexd-event-head">{m.headline}</span>
-              {Number(m.pct_change) !== 0 && (
-                <span className={`wexd-event-pct ${Number(m.pct_change) > 0 ? "up" : "down"}`}>
-                  {formatPct(m.pct_change)}
+              {/* One move for a company or the market; for a several-company
+                  event, each company named with its own. A marker has none. */}
+              {eventMoves(m).filter((mv) => mv.pct !== null).map((mv, k, all) => (
+                <span key={mv.company_id || "market"} className={`wexd-event-pct ${mv.pct > 0 ? "up" : "down"}`}>
+                  {all.length > 1 && `${companies.find((c) => c.id === mv.company_id)?.ticker || "?"} `}
+                  {formatPct(mv.pct)}
                 </span>
-              )}
+              ))}
             </li>
           ))}
         </ol>

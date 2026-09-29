@@ -154,11 +154,32 @@ export default async function handler(req, res) {
       }
 
       case "fire_event": {
-        const result = await rpc("wex_fire_event", {
-          p_company: params.company_id || null,
-          p_headline: params.headline,
-          p_pct: Number(params.pct_change),
-        });
+        // Three shapes, one action:
+        //   no `moves`          the whole market, by `pct_change`
+        //   one move            one company — the original wex_fire_event
+        //   two to four moves   wex_fire_moves (supabase/events.sql)
+        // One company deliberately stays on the old function, so single and
+        // market-wide events keep working on a database without events.sql.
+        const moves = Array.isArray(params.moves)
+          ? params.moves.map((m) => ({ company_id: m.company_id, pct: Number(m.pct) }))
+          : [];
+        if (moves.length > 4) {
+          return res.status(200).json({ ok: false, error: "Four companies at most — any more will not fit on the wall." });
+        }
+        const result = moves.length > 1
+          ? await rpc("wex_fire_moves", { p_headline: params.headline, p_moves: moves })
+          : await rpc("wex_fire_event", {
+              p_company: moves[0]?.company_id || params.company_id || null,
+              p_headline: params.headline,
+              p_pct: moves.length ? moves[0].pct : Number(params.pct_change),
+            });
+        // PostgREST's own error, not the function's: the function is not there.
+        if (result?.code === "PGRST202") {
+          return res.status(200).json({
+            ok: false,
+            error: "Several-company events need supabase/events.sql — run it in the Supabase SQL editor first.",
+          });
+        }
         if (!result?.ok) {
           return res.status(200).json({ ok: false, error: result?.error || "Event failed." });
         }

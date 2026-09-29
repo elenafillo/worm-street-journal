@@ -355,6 +355,8 @@ export const tickerStyles = `
     color: var(--tkr-text);
   }
 
+  .rnd-kicker-move { display: inline-flex; gap: 0.25em; }
+
   /* The announced-at clock, top right of a headline: an amber LED. */
   .rnd-clock {
     margin-left: auto;

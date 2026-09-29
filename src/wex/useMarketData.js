@@ -283,7 +283,8 @@ export function useMarketData({ slow = true } = {}) {
         supabase.query("market_state", { select: "*" }),
         tickLoad,
         supabase.query("market_events", {
-          select: "id,company_id,headline,pct_change,created_at",
+          // `moves` is the several-company event list (supabase/events.sql).
+          select: "id,company_id,headline,pct_change,created_at,moves",
           order: "created_at.desc", limit: 40,
         }),
         supabase.query("trade_tape", { select: "*" }),

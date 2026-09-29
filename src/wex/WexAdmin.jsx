@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { formatWormcoin, formatPct, pctChange } from "./format.js";
 import { SERIES_COLORS } from "./palette.js";
+import { eventMoves } from "./tickerFeed.js";
 
 // The Worm Fed's exchange controls. Rendered inside the existing GM panel,
 // behind the same password — but on its own screen, never interleaved with the
@@ -20,10 +21,32 @@ async function gm(password, action, params = {}) {
 // ============================================================
 // Exchange — the controls you actually use during the party
 // ============================================================
+/** " · SLM −15%, CMP −5%" · " · +10% · market-wide" · " · ANL marker" */
+function describeEvent(e, tickerOf) {
+  const moves = eventMoves(e);
+  if (moves.every((m) => m.pct === null)) {
+    return ` · ${e.company_id ? `${tickerOf(e.company_id)} ` : ""}marker`;
+  }
+  const signed = (p) => `${p > 0 ? "+" : ""}${p}%`;
+  if (moves.length === 1 && !moves[0].company_id) return ` · ${signed(moves[0].pct)} · market-wide`;
+  return ` · ${moves.map((m) => `${tickerOf(m.company_id)} ${signed(m.pct)}`).join(", ")}`;
+}
+
+// The most companies one event may move: what fits on the wall screens'
+// headline windows and tape rows. The database enforces the same number.
+const MAX_EVENT_COMPANIES = 4;
+
+const newRow = () => ({ company_id: "", pct: "-10" });
+
 function ExchangeTab({ password, overview, reload, say }) {
   const [headline, setHeadline] = useState("");
-  const [pct, setPct] = useState("-10");
-  const [target, setTarget] = useState("");        // "" = market-wide
+  // An event hits the whole market by one percentage, or one to four named
+  // companies by a percentage each: "DROUGHT THREATENS SLIME-BASED
+  // TECHNOLOGIES" — SLM −15%, CMP −5%, everyone else untouched.
+  const [scope, setScope] = useState("market");    // "market" | "companies"
+  const [pct, setPct] = useState("-10");           // the market-wide move
+  const [rows, setRows] = useState([newRow()]);    // the per-company moves
+  const [activeRow, setActiveRow] = useState(0);   // where the quick hits land
   const [broadcast, setBroadcast] = useState(true);
   const [marker, setMarker] = useState("");
   const [busy, setBusy] = useState(false);
@@ -49,20 +72,60 @@ function ExchangeTab({ password, overview, reload, say }) {
     reload();
   }
 
+  const setRow = (i, patch) => setRows((rs) => rs.map((r, k) => (k === i ? { ...r, ...patch } : r)));
+  const addRow = () => {
+    setRows((rs) => (rs.length < MAX_EVENT_COMPANIES ? [...rs, newRow()] : rs));
+    setActiveRow(rows.length);
+  };
+  const dropRow = (i) => {
+    setRows((rs) => rs.filter((_, k) => k !== i));
+    setActiveRow(0);
+  };
+
+  // What the event would do to each named company, for the preview and the
+  // button. Mirrors the SQL: floored at min_price.
+  const tickerOf = (id) => companies.find((c) => c.id === id)?.ticker || "?";
+  const moves = rows
+    .filter((r) => r.company_id && r.pct !== "" && Number.isFinite(Number(r.pct)))
+    .map((r) => {
+      const c = companies.find((x) => x.id === r.company_id);
+      const p = Number(r.pct);
+      const after = Math.max(Number(market.min_price) || 0, Number(c?.price) * (1 + p / 100));
+      return { company_id: r.company_id, pct: p, ticker: c?.ticker || "?", before: Number(c?.price), after };
+    });
+  const signed = (p) => `${p > 0 ? "+" : ""}${p}%`;
+
   async function fire() {
     if (!headline.trim()) { say("An event needs a headline.", false); return; }
-    await act("fire_event", {
-      company_id: target || null,
-      headline: headline.trim(),
-      pct_change: Number(pct),
-      broadcast_wsj: broadcast,
-    });
+    if (scope === "market") {
+      await act("fire_event", {
+        company_id: null,
+        headline: headline.trim(),
+        pct_change: Number(pct),
+        broadcast_wsj: broadcast,
+      });
+    } else {
+      if (rows.some((r) => !r.company_id)) { say("Pick a company in every row, or remove the empty one.", false); return; }
+      if (moves.length !== rows.length) { say("Every company needs a percentage.", false); return; }
+      if (moves.some((m) => m.pct <= -100)) { say("A company cannot fall 100% or more.", false); return; }
+      if (new Set(moves.map((m) => m.company_id)).size !== moves.length) {
+        say("Each company can only be in the event once.", false);
+        return;
+      }
+      await act("fire_event", {
+        headline: headline.trim(),
+        moves: moves.map((m) => ({ company_id: m.company_id, pct: m.pct })),
+        broadcast_wsj: broadcast,
+      });
+    }
     setHeadline("");
   }
 
+  // A marker goes on the one company the event form names, or the market.
+  const markerCompany = scope === "companies" && rows.length === 1 ? rows[0].company_id || null : null;
   async function mark() {
     if (!marker.trim()) { say("A marker needs something to say.", false); return; }
-    await act("add_marker", { headline: marker.trim(), company_id: target || null });
+    await act("add_marker", { headline: marker.trim(), company_id: markerCompany });
     setMarker("");
   }
 
@@ -108,31 +171,101 @@ function ExchangeTab({ password, overview, reload, say }) {
         style={{ marginBottom: 8 }}
       />
       <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
-        <select className="form-input" style={{ flex: "2 1 180px" }} value={target} onChange={(e) => setTarget(e.target.value)}>
-          <option value="">Whole economy</option>
-          {companies.map((c) => (
-            <option key={c.id} value={c.id}>{c.ticker} — {c.name}</option>
-          ))}
-        </select>
-        <input
-          className="form-input"
-          style={{ flex: "1 1 90px" }}
-          type="number"
-          value={pct}
-          onChange={(e) => setPct(e.target.value)}
-          placeholder="%"
-        />
+        {[["market", "Whole market"], ["companies", `Companies (up to ${MAX_EVENT_COMPANIES})`]].map(([value, label]) => (
+          <button
+            key={value}
+            className="gm-btn"
+            style={scope === value ? { background: "var(--ink)", color: "var(--paper)" } : undefined}
+            aria-pressed={scope === value}
+            onClick={() => setScope(value)}
+          >
+            {label}
+          </button>
+        ))}
       </div>
+
+      {scope === "market" ? (
+        <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <span style={{ flex: "2 1 180px" }}>Every listed company moves by</span>
+          <input
+            className="form-input"
+            style={{ flex: "1 1 90px" }}
+            type="number"
+            value={pct}
+            onChange={(e) => setPct(e.target.value)}
+            placeholder="%"
+          />
+        </div>
+      ) : (
+        <>
+          {rows.map((r, i) => (
+            <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+              <select
+                className="form-input"
+                style={{ flex: "2 1 180px" }}
+                value={r.company_id}
+                onChange={(e) => setRow(i, { company_id: e.target.value })}
+                onFocus={() => setActiveRow(i)}
+              >
+                <option value="">Pick a company…</option>
+                {companies
+                  // A company already in another row is not offered again.
+                  .filter((c) => c.id === r.company_id || !rows.some((o) => o.company_id === c.id))
+                  .map((c) => (
+                    <option key={c.id} value={c.id}>{c.ticker} — {c.name}</option>
+                  ))}
+              </select>
+              <input
+                className="form-input"
+                style={{ flex: "1 1 90px" }}
+                type="number"
+                value={r.pct}
+                onChange={(e) => setRow(i, { pct: e.target.value })}
+                onFocus={() => setActiveRow(i)}
+                placeholder="%"
+              />
+              {rows.length > 1 && (
+                <button className="gm-btn" onClick={() => dropRow(i)} aria-label={`Remove row ${i + 1}`}>✕</button>
+              )}
+            </div>
+          ))}
+          {rows.length < MAX_EVENT_COMPANIES && (
+            <button className="wex-link" style={{ marginBottom: 8 }} onClick={addRow}>
+              + add another company
+            </button>
+          )}
+          {moves.length > 0 && (
+            <div className="wex-admin-hint" style={{ marginBottom: 4 }}>
+              {moves.map((m) => (
+                <div key={m.company_id}>
+                  {m.ticker}: {formatWormcoin(m.before)} → {formatWormcoin(m.after)} ⌀ ({signed(m.pct)})
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
       <label className="wex-admin-check">
         <input type="checkbox" checked={broadcast} onChange={(e) => setBroadcast(e.target.checked)} />
         Also broadcast on the WSJ ticker
       </label>
       <button className="submit-btn" disabled={busy} onClick={fire} style={{ marginTop: 8 }}>
-        {busy ? "…" : `Fire ${pct}% event`}
+        {busy
+          ? "…"
+          : scope === "market"
+            ? `Fire ${signed(Number(pct))} market event`
+            : `Fire event${moves.length ? ": " + moves.map((m) => `${m.ticker} ${signed(m.pct)}`).join(", ") : ""}`}
       </button>
       <div className="wex-admin-hint">
-        Quick hits: {[-25, -10, -5, 5, 10, 25].map((p) => (
-          <button key={p} className="wex-link" style={{ marginRight: 10 }} onClick={() => setPct(String(p))}>
+        Quick hits{scope === "companies" && rows.length > 1 ? ` (row ${activeRow + 1})` : ""}:{" "}
+        {[-25, -10, -5, 5, 10, 25].map((p) => (
+          <button
+            key={p}
+            className="wex-link"
+            style={{ marginRight: 10 }}
+            onClick={() => (scope === "market" ? setPct(String(p)) : setRow(Math.min(activeRow, rows.length - 1), { pct: String(p) }))}
+          >
             {p > 0 ? `+${p}` : p}%
           </button>
         ))}
@@ -145,8 +278,8 @@ function ExchangeTab({ password, overview, reload, say }) {
       <div className="wex-admin-hint" style={{ marginBottom: 8 }}>
         A vertical line on the dashboard chart, with no price consequence. For the
         things that explain a jump without having caused it — the band starting,
-        someone arriving, a rumour going round the kitchen. Uses the company
-        selector above; leave it on "Whole economy" for a market-wide note.
+        someone arriving, a rumour going round the kitchen. Goes on the company
+        if the event above names exactly one; otherwise it is market-wide.
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <input
@@ -172,10 +305,7 @@ function ExchangeTab({ password, overview, reload, say }) {
       {(overview?.events || []).map((e) => (
         <div key={e.id} className="wex-admin-event">
           <strong>{e.headline}</strong>
-          {Number(e.pct_change) === 0
-            ? " · marker"
-            : ` · ${e.pct_change > 0 ? "+" : ""}${e.pct_change}%`}
-          {!e.company_id && " · market-wide"}
+          {describeEvent(e, tickerOf)}
           <button
             className="wex-link"
             style={{ marginLeft: 10 }}

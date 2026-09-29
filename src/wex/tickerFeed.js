@@ -15,6 +15,25 @@ const DRIFT_RUN_MS = 2000;
 // but 30 ⌀ on a 100k stock is a change — just not one worth a slot on the wall.
 const MIN_VISIBLE_PCT = 0.05;
 
+/**
+ * What an event did, as a list of moves — however it was stored:
+ *
+ *   several companies   its `moves`, one entry each (supabase/events.sql)
+ *   one company         [{ company_id, pct }]
+ *   the whole market    [{ company_id: null, pct }]
+ *   a marker            one entry with pct: null — it moved nothing
+ *
+ * Every screen that shows an event reads it through this, so none of them has
+ * to know that three shapes exist.
+ */
+export function eventMoves(ev) {
+  if (Array.isArray(ev?.moves) && ev.moves.length) {
+    return ev.moves.map((m) => ({ company_id: m.company_id ?? null, pct: Number(m.pct) }));
+  }
+  const pct = Number(ev?.pct_change);
+  return [{ company_id: ev?.company_id ?? null, pct: Number.isFinite(pct) && pct !== 0 ? pct : null }];
+}
+
 /** Percent move from one price to another, or null when either is missing. */
 function pctMove(from, to) {
   const a = Number(from);
@@ -66,8 +85,10 @@ export function buildFeed({ tape = [], ticks = [], events = [], companies = [], 
       kind: "news",
       t: ev.t ?? new Date(ev.created_at).getTime(),
       headline: ev.headline,
-      ticker: ev.company_id ? tickerOf.get(ev.company_id) || "?" : "MKT",
-      pct: Number.isFinite(Number(ev.pct_change)) ? Number(ev.pct_change) : null,
+      moves: eventMoves(ev).map((m) => ({
+        ticker: m.company_id ? tickerOf.get(m.company_id) || "?" : "MKT",
+        pct: m.pct,
+      })),
     });
   }
 
