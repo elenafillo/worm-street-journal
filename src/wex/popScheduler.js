@@ -23,8 +23,13 @@ export const OPEN_MS = 400;            // unfold — NOT scaled: it is the look
 export const CLOSE_MS = 450;           // switch-off — likewise
 const REVEAL_BASE_MS = 1200;           // a line drawing itself in
 
-const MAX_COVER = 0.7;                 // never more of the screen than this
-const MAX_HIDDEN = 0.5;                // never hide more of a window than this
+// How crowded the screen may get. A wall has room to spread windows out; a
+// phone does not, and spread out on one they read as a list, not a desk — so
+// there windows land anywhere allowed rather than in the emptiest spot, and
+// may fill more of the screen. Half a window stays the most one may hide.
+const WALL_RULES = { maxCover: 0.7, maxHidden: 0.5, spread: true };
+const PHONE_RULES = { maxCover: 0.85, maxHidden: 0.5, spread: false };
+export const rulesFor = (viewport) => (viewport.w < 768 ? PHONE_RULES : WALL_RULES);
 const BIG_TRADE_PCT = 2;               // a trade moving a stock this much summons
 
 /** Line draw-in at a given speed: faster with the tempo, never a blur. */
@@ -110,11 +115,13 @@ export function sizeFor(kind, viewport, grid, rng) {
 }
 
 /**
- * Where to put a window of `size`: the least-overlapping of `tries` random
- * grid positions, never one that hides more than half of a window already up.
- * Returns null when every candidate would — the caller then waits.
+ * Where to put a window of `size`: one of `tries` random grid positions,
+ * never one that hides more than `maxHidden` of a window already up. With
+ * `spread`, the least-overlapping; without, the first allowed — overlap as it
+ * falls. Returns null when every candidate breaks the rule; the caller waits.
  */
 export function placeWindow(open, size, viewport, grid, rng, tries = 12) {
+  const { maxHidden, spread } = rulesFor(viewport);
   const maxX = Math.max(grid, viewport.w - size.w - grid);
   const maxY = Math.max(grid, viewport.h - size.h - grid);
   let best = null;
@@ -124,8 +131,9 @@ export function placeWindow(open, size, viewport, grid, rng, tries = 12) {
       y: Math.max(grid, snap(grid + rng() * (maxY - grid), grid)),
       ...size,
     };
-    if (open.some((o) => overlap(c, o) / (o.w * o.h) > MAX_HIDDEN)) continue;
-    const score = open.reduce((sum, o) => sum + overlap(c, o), 0);
+    if (open.some((o) => overlap(c, o) / (o.w * o.h) > maxHidden)) continue;
+    // Every candidate is still drawn either way, so a seed replays the same.
+    const score = spread ? open.reduce((sum, o) => sum + overlap(c, o), 0) : 0;
     if (!best || score < best.score) best = { ...c, score };
   }
   return best && { x: best.x, y: best.y, w: best.w, h: best.h };
@@ -283,7 +291,7 @@ export function step(state, now, env, rng) {
     if (!rect) return false;
     // The cap counts the newcomer: an ambient window that would take the screen
     // past it waits for the next slot. Summoned ones are news and go anyway.
-    if (!summoned && coverage([...live(), rect], env.viewport) > MAX_COVER) return false;
+    if (!summoned && coverage([...live(), rect], env.viewport) > rulesFor(env.viewport).maxCover) return false;
     windows.push({
       id: nextId++,
       kind,
