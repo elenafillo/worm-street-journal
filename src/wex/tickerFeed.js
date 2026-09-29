@@ -172,3 +172,29 @@ export function repairSlots(slots, pool, count = 3, rng = Math.random) {
   }
   return { ids, next: want ? slots.next % want : 0 };
 }
+
+// ============================================================
+// The news flash on the fixed ticker
+// ============================================================
+// Any market event from the last three hours comes back, every few minutes,
+// as a window in the middle of the screen: in for three seconds, out, in
+// again for two, gone. Fixed beats rather than a random schedule, so it reads
+// as a signal — a phone buzzing twice — not as decoration.
+
+export const FLASH_WINDOW_MS = 3 * 3_600_000;
+
+/** The beats of one flash, ms from its start. Closing takes CLOSE_MS more. */
+export const FLASH_BEATS = [
+  { at: 0, open: true },
+  { at: 3000, open: false },
+  { at: 3900, open: true },
+  { at: 5900, open: false },
+];
+
+/** Events worth flashing at `now`: the last `windowMs`, newest first. */
+export function recentEvents(events, now, windowMs = FLASH_WINDOW_MS) {
+  return events
+    .map((e) => ({ ...e, t: e.t ?? new Date(e.created_at).getTime() }))
+    .filter((e) => e.t <= now && now - e.t <= windowMs)
+    .sort((a, b) => b.t - a.t);
+}

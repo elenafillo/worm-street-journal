@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMarketData } from "./useMarketData.js";
 import PixelChart from "./PixelChart.jsx";
 import TickerRandom from "./TickerRandom.jsx";
+import NewsFlash from "./NewsFlash.jsx";
 import { buildFeed, pickSlots, nextSlots, repairSlots } from "./tickerFeed.js";
 import { formatWormcoin, pctChange, hms } from "./format.js";
 import { Move, FeedRow } from "./TickerRows.jsx";
@@ -28,6 +29,10 @@ import { hashParams, numberParam } from "./hashParams.js";
 //           phone — bigger is chunkier)
 //   hours   width of the chart window       (default 6)
 //   y       abs = share price in ⌀ (default) · pct = percent vs open
+//   news    minutes between headline flashes (default 3; 0 turns them off).
+//           Any market event from the last three hours pops up mid-screen:
+//           three seconds, off, two seconds. A new one flashes at once.
+//   newsage hours back an event still counts as news (default 3)
 //
 // Same data as #wex, from the same hook: anon-readable tables only.
 
@@ -53,6 +58,8 @@ function TickerFixed() {
   const hours = numberParam(params, "hours", 6, 0.25, 72);
   // Share price by default; `?y=pct` brings back the percent-vs-open chart.
   const yMode = params.get("y") === "pct" ? "pct" : "abs";
+  const newsMs = numberParam(params, "news", 3, 0, 60) * 60_000;
+  const newsAgeMs = numberParam(params, "newsage", 3, 0.1, 24 * 365) * 3_600_000;
 
   // One clock for the header and the right edge of the chart.
   const [now, setNow] = useState(() => Date.now());
@@ -164,6 +171,8 @@ function TickerFixed() {
           />
         </section>
       </main>
+
+      <NewsFlash events={events} byId={byId} loaded={loaded} everyMs={newsMs} windowMs={newsAgeMs} />
     </div>
   );
 }

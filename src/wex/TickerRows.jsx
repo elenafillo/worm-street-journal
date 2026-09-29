@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { formatWormcoin, hm } from "./format.js";
 
 // ============================================================
-// Tape rows — shared by the fixed ticker and random mode's TAPE window
+// Tape rows and headlines — shared by the fixed ticker and random mode
 // ============================================================
 
 export function Move({ pct }) {
@@ -127,4 +127,50 @@ export function FeedRow({ row }) {
     default:
       return null;
   }
+}
+
+const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+
+/**
+ * When the event was announced, as a little LED clock: unlit "88:88"
+ * segments behind the lit digits, and a blinking colon. An event from an
+ * earlier day says which, underneath — "22:14" alone would claim tonight.
+ */
+function AnnouncedClock({ t }) {
+  const d = new Date(t);
+  const [h, m] = hm(t).split(":");
+  const today = d.toDateString() === new Date().toDateString();
+  return (
+    <span className="rnd-clock" aria-label={`Announced at ${h}:${m}`}>
+      <span className="rnd-clock-face">
+        <span className="rnd-clock-ghost" aria-hidden="true">88:88</span>
+        <span className="rnd-clock-time">
+          {h}<span className="rnd-clock-colon">:</span>{m}
+        </span>
+      </span>
+      {!today && <span className="rnd-clock-date">{`${MONTHS[d.getMonth()]} ${String(d.getDate()).padStart(2, "0")}`}</span>}
+    </span>
+  );
+}
+
+/**
+ * One market event, big: the NEWS window of random mode, and the news flash
+ * on the fixed ticker. Sized to its window by container units (tickerStyles).
+ */
+export function HeadlineBody({ event, byId }) {
+  if (!event) return null;
+  const ticker = event.company_id ? byId.get(event.company_id)?.ticker || "?" : "MARKET";
+  const pct = Number(event.pct_change);
+  const t = event.t ?? new Date(event.created_at).getTime();
+  return (
+    <div className="rnd-headline">
+      <div className="rnd-kicker">
+        <span className="tkr-tag news">NEWS</span>
+        <span>{ticker}</span>
+        <Move pct={Number.isFinite(pct) && pct !== 0 ? pct : null} />
+        <AnnouncedClock t={t} />
+      </div>
+      <div className="rnd-hl">{String(event.headline || "").toUpperCase()}</div>
+    </div>
+  );
 }

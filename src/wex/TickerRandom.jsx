@@ -3,7 +3,7 @@ import { useMarketData } from "./useMarketData.js";
 import PixelChart from "./PixelChart.jsx";
 import { PixelSparks, PixelBars, PixelNumber } from "./PixelKinds.jsx";
 import PopWindow from "./PopWindow.jsx";
-import { FeedRow, Move } from "./TickerRows.jsx";
+import { FeedRow, HeadlineBody } from "./TickerRows.jsx";
 import { buildFeed } from "./tickerFeed.js";
 import { initialState, step, makeRng, revealMs, KINDS } from "./popScheduler.js";
 import { hashParams, numberParam } from "./hashParams.js";
@@ -53,23 +53,6 @@ function ChartBody({ ids, byId, colors, ticks, now, hours, scale, yMode, speed }
   );
 }
 
-function HeadlineBody({ win, events, byId }) {
-  const ev = events.find((e) => e.id === win.eventId) || events[0];
-  if (!ev) return null;
-  const ticker = ev.company_id ? byId.get(ev.company_id)?.ticker || "?" : "MARKET";
-  const pct = Number(ev.pct_change);
-  return (
-    <div className="rnd-headline">
-      <div className="rnd-kicker">
-        <span className="tkr-tag news">NEWS</span>
-        <span>{ticker}</span>
-        <Move pct={Number.isFinite(pct) ? pct : null} />
-      </div>
-      <div className="rnd-hl">{String(ev.headline || "").toUpperCase()}</div>
-    </div>
-  );
-}
-
 function WindowBody({ win, data, now, scale, yMode, speed }) {
   const { byId, companies, ticks, events, feed } = data;
   switch (win.kind) {
@@ -90,7 +73,7 @@ function WindowBody({ win, data, now, scale, yMode, speed }) {
     case "big":
       return <PixelNumber company={byId.get(win.companyIds[0])} scale={scale} />;
     case "headline":
-      return <HeadlineBody win={win} events={events} byId={byId} />;
+      return <HeadlineBody event={events.find((e) => e.id === win.eventId) || events[0]} byId={byId} />;
     case "tape":
       return (
         <ul className="rnd-tape">

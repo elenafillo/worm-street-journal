@@ -194,6 +194,19 @@ export const tickerStyles = `
     filter: drop-shadow(0 0 3px rgba(120, 255, 170, 0.35));
   }
 
+  /* ---- the news flash (NewsFlash) ----------------------------------------
+     A random-mode window in the middle of the screen: over the panels, under
+     the scanlines (z-index 2 on .tkr::after), and never in the way of a click. */
+  .tkr-flash {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+  }
+  .tkr-flash-box { position: relative; }
+
   /* ---- motion ------------------------------------------------------------ */
   @keyframes tkr-blink { 50% { opacity: 0; } }
   @keyframes tkr-in {
@@ -335,12 +348,40 @@ export const tickerStyles = `
   }
   .rnd-kicker {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 0.5em;
     font-size: max(11px, 0.45em);
     margin-bottom: 0.15em;
     color: var(--tkr-text);
   }
+
+  /* The announced-at clock, top right of a headline: an amber LED. */
+  .rnd-clock {
+    margin-left: auto;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.1em;
+    text-shadow: none;
+  }
+  .rnd-clock-face {
+    display: grid;
+    padding: 0.05em 0.3em;
+    font-size: 1.9em;
+    line-height: 1;
+    letter-spacing: 0.06em;
+    font-variant-numeric: tabular-nums;
+    color: var(--tkr-amber);
+    background: #140c00;
+    border: 2px solid #5a3d00;
+  }
+  /* Lit digits over unlit ones, in the same grid cell. */
+  .rnd-clock-ghost,
+  .rnd-clock-time { grid-area: 1 / 1; }
+  .rnd-clock-ghost { color: rgba(255, 176, 0, 0.12); }
+  .rnd-clock-time { text-shadow: 0 0 0.25em rgba(255, 176, 0, 0.8); }
+  .rnd-clock-colon { animation: tkr-blink 1.06s steps(1) infinite; }
+  .rnd-clock-date { color: #8a6400; letter-spacing: 0.08em; }
 
   /* TAPE */
   .rnd-tape {
