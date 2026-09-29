@@ -29,6 +29,7 @@ which also settles dashboard-vs-board, the nav, and the light sheet.
 | 6.5 | In-game explanations (gate · trade desk · wall dialog) | ✅ built |
 | 6.6 | **Price drift** — the weather (§5.1) | ✅ installed and drifting · 🟡 re-run `drift.sql` to add the `pg_cron` heartbeat |
 | 7 | **The price board** — `#board`, seven enormous rows + sparklines. Optional; §8 explains why it is its own screen | ⬜ not started |
+| 7.5 | **The ticker** — `#ticker`, a dark 80s terminal: quotes + a combined tape (trades, news, Fed sets, drift) on the left, a pixel-canvas 6h chart of three rotating companies on the right. Needs `supabase/ticker.sql` (adds `price_before`/`price_after` to `trade_tape`). Later: a pop-up `?mode=random` built on `PixelChart` + `pixelFont` | ✅ built · 🟡 run `ticker.sql` |
 | 8 | Dry run, tune `liquidity`, update HANDOFF.md | ⬜ not started |
 
 ### What has NOT been verified
@@ -119,6 +120,7 @@ This builds WEX v0: seven fictional worm companies, each fronted by a party atte
 Guest phone   /#trade   → three-word gate → portfolio + buy/sell        nav TRADE
 Wall display  /#wex     → price chart, market health, leaderboards, tape  nav WEX
 Wall display  /#board   → 7 big price rows + sparklines (phase 7, optional; off-nav)
+Wall display  /#ticker  → 80s terminal: quotes, tape, rotating pixel chart (off-nav, no nav bar)
 GM            /#gm      → existing Newsroom tab + new Exchange / Companies / Players tabs
 
            POST /api/wex          (guest; code-authenticated)

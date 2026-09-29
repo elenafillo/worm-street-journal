@@ -194,7 +194,11 @@ create or replace view trade_tape as
          t.side,
          t.shares,
          t.exec_price,
-         t.created_at
+         t.created_at,
+         -- Appended last (see supabase/ticker.sql) so `create or replace`
+         -- still works on a database that has the older view.
+         t.price_before,
+         t.price_after
     from trades t
     join players   p on p.id = t.player_id
     join companies c on c.id = t.company_id

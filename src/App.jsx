@@ -7,12 +7,14 @@ import WexAdmin from "./wex/WexAdmin.jsx";
 import WexDash from "./wex/WexDash.jsx";
 import { wexStyles } from "./wex/wexStyles.js";
 import { dashStyles } from "./wex/dashStyles.js";
+import TickerDash from "./wex/TickerDash.jsx";
+import { tickerStyles } from "./wex/tickerStyles.js";
 
 // ============================================================
 // Styles
 // ============================================================
 const styles = `
-  @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;900&family=Inter:wght@400;500;700&family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400;1,700&family=UnifrakturMaguntia&family=IM+Fell+English:ital@0;1&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;900&family=Inter:wght@400;500;700&family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400;1,700&family=UnifrakturMaguntia&family=IM+Fell+English:ital@0;1&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=VT323&display=swap');
 
   @font-face {
     font-family: 'Rojal';
@@ -1970,7 +1972,10 @@ function GMPanel() {
 // ============================================================
 // Root App with simple routing
 // ============================================================
-const ROUTES = ["broadsheet", "display", "submit", "gm", "trade", "wex"];
+const ROUTES = ["broadsheet", "display", "submit", "gm", "trade", "wex", "ticker"];
+
+// Wall screens that fill the viewport and draw no nav bar of their own.
+const BARE_ROUTES = ["ticker"];
 const DEFAULT_ROUTE = "broadsheet";
 
 // Strip the leading "#" and anything from "?" onward, so a hash carrying query
@@ -1998,14 +2003,14 @@ export default function App() {
 
   return (
     <div data-style={DISPLAY_STYLE}>
-      <style>{styles}{wexStyles}{dashStyles}</style>
+      <style>{styles}{wexStyles}{dashStyles}{tickerStyles}</style>
       {/* Five short labels, still one phone line without wrapping — roughly
           290px of text and gaps inside a 320px viewport. The old standalone
           "WSJ" brand is gone; it is now the broadsheet link itself.
           WEX is the public market dashboard on the wall, TRADE is the guest's
           own phone screen. WEX used to point at TRADE, which was always a
           slight lie. */}
-      <div className="nav">
+      {!BARE_ROUTES.includes(route) && <div className="nav">
         <span className={`nav-link ${route === "broadsheet" ? "active" : ""}`} onClick={() => navigate("broadsheet")}>
           WSJ
         </span>
@@ -2021,8 +2026,9 @@ export default function App() {
         <span className={`nav-link ${route === "gm" ? "active" : ""}`} onClick={() => navigate("gm")}>
           FED
         </span>
-      </div>
+      </div>}
       {route === "display" && <DisplayScreen />}
+      {route === "ticker" && <TickerDash />}
       {route === "broadsheet" && <BroadsheetScreen />}
       {route === "wex" && <WexDash />}
       {route === "trade" && <WexTrade />}

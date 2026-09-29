@@ -5,6 +5,7 @@ import { colorOf } from "./palette.js";
 import { HowWexWorks } from "./HowItWorks.jsx";
 import { CHART_WINDOWS, resolveWindow } from "./chartSeries.js";
 import { formatWormcoin, formatPct, pctChange, WORMCOIN } from "./format.js";
+import { hashParams } from "./hashParams.js";
 
 // ============================================================
 // #wex — the public dashboard
@@ -24,13 +25,6 @@ import { formatWormcoin, formatPct, pctChange, WORMCOIN } from "./format.js";
 // The window list itself lives in chartSeries.js, shared with the phone's
 // fortune charts so the two screens cannot disagree about what "Session" means.
 const WINDOWS = CHART_WINDOWS;
-
-function hashParams() {
-  const q = window.location.hash.includes("?")
-    ? window.location.hash.split("?")[1]
-    : "";
-  return new URLSearchParams(q);
-}
 
 export default function WexDash() {
   const { companies, market, ticks, events, tape, board, health, stats, loaded, error } =
