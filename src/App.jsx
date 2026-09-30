@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import { supabase } from "./lib/supabase.js";
 import { DISPLAY_STYLE, PARTY_THURSDAY } from "./lib/config.js";
 import { useBreaking } from "./lib/useBreaking.js";
+import { useArticles } from "./lib/useArticles.js";
 import WexTrade from "./wex/WexTrade.jsx";
 import WexAdmin from "./wex/WexAdmin.jsx";
 import { storedCode, wex } from "./wex/wexApi.js";
@@ -1188,25 +1189,11 @@ function Ticker({ messages }) {
 // Display Screen
 // ============================================================
 function DisplayScreen() {
-  const [articles, setArticles] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { articles: all, loaded } = useArticles();
+  const loading = !loaded;
   const { live: breaking } = useBreaking();
 
-  async function fetchArticles() {
-    const data = await supabase.query("articles", {
-      select: "*",
-      order: "created_at.desc",
-    });
-    if (Array.isArray(data)) {
-      setArticles(data.filter(a => !a.hidden && (!a.article_type || a.article_type === "article")));
-    }
-    setLoading(false);
-  }
-
-  useEffect(() => {
-    fetchArticles();
-    return supabase.subscribe("articles", fetchArticles);
-  }, []);
+  const articles = all.filter(a => !a.hidden && (!a.article_type || a.article_type === "article"));
 
   const today = new Date().toLocaleDateString("en-GB", {
     weekday: "long", day: "numeric", month: "long", year: "numeric",
@@ -1277,24 +1264,12 @@ function BroadsheetScreen() {
   const mode = params.get("mode") || "recent";
   const speed = Math.max(5, parseInt(params.get("speed") || "15", 10));
 
-  const [articles, setArticles] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { articles: all, loaded } = useArticles();
+  const loading = !loaded;
   const [headlineIdx, setHeadlineIdx] = useState(0);
   const { live: breaking } = useBreaking();
 
-  async function fetchArticles() {
-    const data = await supabase.query("articles", {
-      select: "*",
-      order: "created_at.desc",
-    });
-    if (Array.isArray(data)) setArticles(data.filter(a => !a.hidden));
-    setLoading(false);
-  }
-
-  useEffect(() => {
-    fetchArticles();
-    return supabase.subscribe("articles", fetchArticles);
-  }, []);
+  const articles = all.filter(a => !a.hidden);
 
   const visibleArticles = articles.filter(a => !a.article_type || a.article_type === "article");
 
@@ -1302,7 +1277,13 @@ function BroadsheetScreen() {
     .filter(a => a.article_type === "notice")
     .slice(0, 4);
 
-  const now = Date.now();
+  // What's-on items drop off an hour after they start. Their own clock: the
+  // articles no longer re-render the page every poll, only when news changes.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
   const events = articles
     .filter(a => a.article_type === "entertainment" && a.scheduled_at)
     .filter(a => now < new Date(a.scheduled_at).getTime() + 60 * 60 * 1000)

@@ -806,3 +806,45 @@ create table if not exists article_filers (
 alter table article_filers enable row level security;
 revoke all on article_filers from anon, authenticated;
 grant select, insert, update, delete on article_filers to service_role;
+
+
+-- ============================================================================
+-- 9. Sustainable news fetching
+-- ============================================================================
+-- The migration was supabase/news.sql, which explains it in full. In short: a
+-- newspaper screen polls `articles_version` (one row) and fetches only the
+-- articles whose updated_at moved, instead of every article every four
+-- seconds. updated_at, not created_at, because publishing a held story is an
+-- update to an old row. See src/lib/useArticles.js.
+
+alter table articles add column if not exists updated_at timestamptz not null default now();
+
+create index if not exists articles_updated_at_idx on articles (updated_at);
+
+create or replace function articles_touch()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists articles_touch on articles;
+create trigger articles_touch
+  before insert or update on articles
+  for each row execute function articles_touch();
+
+-- security_invoker, unlike leaderboard / trade_tape: it runs under the
+-- reader's own RLS, so it counts only stories anon can already see.
+create or replace view articles_version
+  with (security_invoker = true) as
+  select count(*)        as visible,
+         max(updated_at) as changed_at
+    from articles
+   where hidden = false;
+
+revoke all on articles_version from anon, authenticated;
+grant select on articles_version to anon, service_role;

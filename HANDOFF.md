@@ -99,6 +99,7 @@ Working list. WEX has its own detailed plan and status table in
 [WEX_plan.md](WEX_plan.md) — this is the whole-project view.
 
 ### Blocking the party
+- [ ] **Run [supabase/news.sql](supabase/news.sql)** in the SQL editor. Adds `articles.updated_at` (set by a trigger) and the one-row `articles_version` view, so the newspaper screens poll a fingerprint and fetch only the stories that changed, instead of every story every 4 s ([src/lib/useArticles.js](src/lib/useArticles.js)). Until it runs they fall back to the old full fetch, now paged past PostgREST's 1000-row cap. Then check `/#broadsheet`: file a story, hide it, publish a held one, and each should appear or vanish within a few seconds.
 - [ ] **Name the seven companies** — currently placeholders (ANL, MLC, CST, BUR, SLM, CMP, SEG) all at 100,000 ⌀. Real names, tickers, and which attendee fronts each. GM panel → WEX → Companies.
 - [ ] **Update `PARTY_THURSDAY`** in [src/lib/config.js](src/lib/config.js) — currently `2026-11-26`.
 - [x] ~~**WEX dashboard (`/#wex`)** — built.~~ Price chart, legend, market-health tiles, both leaderboards, trade tape, on a light paper sheet like the newspaper. Scrolls rather than fitting a fixed canvas. Two things still open:
@@ -119,6 +120,7 @@ Working list. WEX has its own detailed plan and status table in
 - [ ] **Remove the "PRICE: 1 WORMCOIN" text** — two occurrences in [src/App.jsx](src/App.jsx) (feed masthead and broadsheet masthead).
 - [ ] **9 pre-existing lint errors** in `App.jsx` and the two untracked variants — all `react-hooks/set-state-in-effect`. Predate WEX; `npm run lint` has never been clean. New WEX files are clean.
 - [ ] Point a domain / share a QR code with guests.
+- [ ] **Show % change over three spans: the last 2 hours, the last 15 minutes, and since open** — on the `#ticker` quotes board, which currently shows only since-open. Needs each company's price as of 2 h and 15 min ago, taken from the `price_ticks` the page already loads (the last tick at or before that moment, as the chart's carry-in does), so no new query.
 
 ### Nice-to-have
 - [ ] **Print button on the broadsheet** — saves the current display as an image. Paired with an "Extra, extra" button in the GM panel that captures the display and runs the old-school spinning-newspaper TV effect. Needs a capture library (e.g. `html-to-image`); nothing installed yet.
