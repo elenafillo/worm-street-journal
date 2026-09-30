@@ -84,7 +84,9 @@ export const KINDS = {
   bars:     { weight: 2, size: [[0.26, 0.34], [0.32, 0.42]] },
   big:      { weight: 3, size: [[0.20, 0.28], [0.24, 0.30]] },
   // Weight 0: headlines are scheduled by age (newsInterval), never drawn at random.
-  headline: { weight: 0, size: [[0.34, 0.46], [0.22, 0.30]], needs: "events" },
+  // `narrowH`: on a phone a headline wraps to several lines, so it gets a
+  // taller window than the 0.72-squashed default would give it.
+  headline: { weight: 0, size: [[0.34, 0.46], [0.22, 0.30]], narrowH: [0.30, 0.40], needs: "events" },
   tape:     { weight: 2, size: [[0.30, 0.38], [0.30, 0.38]], needs: "tape" },
 };
 
@@ -129,7 +131,9 @@ export function sizeFor(kind, viewport, grid, rng) {
   // grid cells, and a window off the grid would not line up with the others.
   const full = Math.floor((viewport.w - 2 * grid) / grid) * grid;
   const w = snap(between(rng, narrow ? [0.6, 0.85] : wr) * viewport.w, grid);
-  const h = snap(between(rng, hr) * viewport.h * (narrow ? 0.72 : 1), grid);
+  const tall = narrow && KINDS[kind].narrowH;
+  const h = snap(tall ? between(rng, tall) * viewport.h
+                      : between(rng, hr) * viewport.h * (narrow ? 0.72 : 1), grid);
   return {
     w: Math.max(grid * 6, Math.min(w, full)),
     h: Math.max(grid * 4, Math.min(h, viewport.h - 2 * grid)),

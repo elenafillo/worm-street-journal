@@ -346,8 +346,14 @@ export const tickerStyles = `
     line-height: 0.95;
     overflow: hidden;
   }
+  /* A phone-width window: smaller type, so a long headline wraps onto more
+     lines instead of running off the bottom. */
+  @container (max-width: 480px) {
+    .rnd-headline { font-size: clamp(13px, min(15cqh, 6.5cqw), 40px); line-height: 1.05; }
+  }
   .rnd-kicker {
     display: flex;
+    flex-wrap: wrap;   /* four moves and the clock do not fit one phone line */
     align-items: center;
     gap: 0.5em;
     font-size: max(11px, 0.45em);
