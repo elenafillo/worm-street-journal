@@ -31,6 +31,13 @@ export function jsonBody(req) {
   }
 }
 
+/** A typed player code, reduced to what players.code_norm stores in Postgres:
+ *  lowercase letters and digits only. Shared by /api/wex and /api/submit so
+ *  the two can never disagree about whether a code matches. */
+export function normaliseCode(code) {
+  return String(code || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
 export function serviceHeaders() {
   return {
     apikey: SUPABASE_SERVICE_ROLE_KEY,

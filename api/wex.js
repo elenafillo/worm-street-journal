@@ -10,16 +10,11 @@
 // the execute_trade() Postgres function so the whole read-check-write happens
 // inside one transaction — see supabase/schema.sql for why that matters.
 
-import { SUPABASE_URL, serviceHeaders, jsonBody, rest, rpc } from "./_supabase.js";
-
-/** Same normalisation as players.code_norm in Postgres and normaliseCode() in the client. */
-function normalise(code) {
-  return String(code || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-}
+import { SUPABASE_URL, serviceHeaders, jsonBody, rest, rpc, normaliseCode } from "./_supabase.js";
 
 /** Look a player up by their typed code. Returns null if there is no match. */
 async function findPlayer(code) {
-  const norm = normalise(code);
+  const norm = normaliseCode(code);
   if (!norm) return null;
   const rows = await rest(
     "players",
@@ -53,9 +48,10 @@ async function portfolioFor(player) {
   const [companies, holdings, state, trades] = await Promise.all([
     // `liquidity` is included so the client can preview what a trade will cost
     // and how far it will move the price. Display only — the server recomputes.
+    // `ceo_player_id` only to work out `ceo_of` below; it is not passed on.
     rest(
       "companies",
-      "select=id,ticker,name,ceo_name,blurb,price,open_price,liquidity,is_halted&is_listed=eq.true&order=sort_order"
+      "select=id,ticker,name,ceo_name,ceo_player_id,blurb,price,open_price,liquidity,is_halted&is_listed=eq.true&order=sort_order"
     ),
     rest("holdings", `select=company_id,shares&player_id=eq.${player.id}&shares=neq.0`),
     rest("market_state", "select=is_open,min_price,max_impact&id=eq.1"),
@@ -75,11 +71,19 @@ async function portfolioFor(player) {
     (Array.isArray(holdings) ? holdings : []).map((h) => [h.company_id, h.shares])
   );
 
-  const positions = (Array.isArray(companies) ? companies : []).map((c) => ({
-    ...c,
-    shares: held.get(c.id) || 0,
-    value: (held.get(c.id) || 0) * Number(c.price),
-  }));
+  const listed = Array.isArray(companies) ? companies : [];
+
+  // The one company this player runs, if any (a unique index guarantees at
+  // most one). The submit page shows "Press release for SLM" from this;
+  // /api/submit checks it again for itself rather than trusting the page.
+  const run = listed.find((c) => c.ceo_player_id === player.id);
+  const ceoOf = run ? { id: run.id, ticker: run.ticker, name: run.name } : null;
+
+  const positions = listed.map((c) => {
+    const p = { ...c, shares: held.get(c.id) || 0, value: (held.get(c.id) || 0) * Number(c.price) };
+    delete p.ceo_player_id;
+    return p;
+  });
 
   const cash = Number(player.cash);
   const netWorth = positions.reduce((sum, p) => sum + p.value, cash);
@@ -96,6 +100,7 @@ async function portfolioFor(player) {
         ? Math.round(((netWorth / startingCash) - 1) * 1000) / 10
         : null,
     },
+    ceo_of: ceoOf,
     holdings: Array.isArray(holdings) ? holdings : [],
     trades: Array.isArray(trades) ? [...trades].reverse() : [],   // oldest first
     companies: positions,

@@ -113,6 +113,8 @@ create table if not exists market_events (
   -- supabase/events.sql): [{"company_id": …, "pct": …}, …], up to four. NULL
   -- for an event on one company or the whole market, which is most of them.
   moves      jsonb
+  -- article_id (the held story an event published) is added in section 8,
+  -- once `articles` exists.
 );
 alter table market_events add column if not exists moves jsonb;
 
@@ -135,7 +137,9 @@ insert into market_state (id) values (1) on conflict (id) do nothing;
 -- 2. Row Level Security
 -- ============================================================================
 -- NOTE: tables created via the SQL editor have RLS OFF by default (unlike the
--- Table Editor UI, which turns it on for you). Every table must be listed here.
+-- Table Editor UI, which turns it on for you). Every table must be listed here,
+-- except those defined after this point: articles and events (section 7) and
+-- article_filers (section 8) enable their own.
 
 alter table players       enable row level security;
 alter table holdings      enable row level security;
@@ -508,11 +512,23 @@ grant execute on function wex_reset_all()    to service_role;
 --
 -- p_company null = market-wide. That is the only difference between "DIRT
 -- SCANDAL hits Annelid Corp" and "THE GREAT DROUGHT".
+--
+-- p_article_id publishes a held story (section 8) in the same transaction as
+-- the move. These functions return an error rather than raising one, so
+-- anything already written stays written. Hence the order: check everything,
+-- THEN claim the story, THEN move prices. A refused event never publishes.
+-- Claiming is `update … where held`: a second fire of the same story waits on
+-- the row lock, then finds held = false and is refused before anything moves.
+--
+-- The drop removes the pre-held.sql three-argument version: a new parameter
+-- makes a new overload, not a replacement.
+drop function if exists wex_fire_event(uuid, text, numeric);
 
 create or replace function wex_fire_event(
-  p_company  uuid,        -- null = every listed company
-  p_headline text,
-  p_pct      numeric      -- -25 = crash by a quarter
+  p_company    uuid,             -- null = every listed company
+  p_headline   text,
+  p_pct        numeric,          -- -25 = crash by a quarter
+  p_article_id uuid default null -- a held story to publish with the move
 )
 returns json
 language plpgsql
@@ -529,6 +545,18 @@ begin
   if p_pct is null then
     return json_build_object('ok', false, 'error', 'An event needs a percentage.');
   end if;
+  if not exists (select 1 from companies
+                  where is_listed and (p_company is null or id = p_company)) then
+    return json_build_object('ok', false, 'error', 'No such company trades here.');
+  end if;
+
+  if p_article_id is not null then
+    update articles set held = false, hidden = false
+     where id = p_article_id and held;
+    if not found then
+      return json_build_object('ok', false, 'error', 'That story has already been dealt with.');
+    end if;
+  end if;
 
   select min_price into v_min from market_state where id = 1;
 
@@ -540,21 +568,18 @@ begin
      and (p_company is null or id = p_company);
   get diagnostics v_affected = row_count;
 
-  if v_affected = 0 then
-    return json_build_object('ok', false, 'error', 'No such company trades here.');
-  end if;
-
   insert into price_ticks (company_id, price, reason)
   select id, price, 'gm_event'
     from companies
    where is_listed and (p_company is null or id = p_company);
 
-  insert into market_events (company_id, headline, pct_change)
-  values (p_company, btrim(p_headline), p_pct);
+  insert into market_events (company_id, headline, pct_change, article_id)
+  values (p_company, btrim(p_headline), p_pct, p_article_id);
 
   return json_build_object(
     'ok', true, 'affected', v_affected,
-    'headline', btrim(p_headline), 'pct_change', p_pct
+    'headline', btrim(p_headline), 'pct_change', p_pct,
+    'published', p_article_id is not null
   );
 end;
 $$;
@@ -596,13 +621,19 @@ $$;
 -- ----------------------------------------------------------------------------
 -- Everything is checked BEFORE anything moves, and it is one function, so one
 -- transaction: a bad third row cannot leave the first two companies moved and
--- no headline written.
-create or replace function wex_fire_moves(p_headline text, p_moves jsonb)
+-- no headline written. p_article_id works exactly as in wex_fire_event.
+drop function if exists wex_fire_moves(text, jsonb);
+
+create or replace function wex_fire_moves(
+  p_headline   text,
+  p_moves      jsonb,
+  p_article_id uuid default null
+)
 returns json
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
 declare
   v_min  numeric;
   v_n    integer;
@@ -642,6 +673,14 @@ begin
     if abs(v_pct) > abs(v_top) then v_top := v_pct; end if;
   end loop;
 
+  if p_article_id is not null then
+    update articles set held = false, hidden = false
+     where id = p_article_id and held;
+    if not found then
+      return json_build_object('ok', false, 'error', 'That story has already been dealt with.');
+    end if;
+  end if;
+
   select min_price into v_min from market_state where id = 1;
 
   for v_move in select * from jsonb_array_elements(p_moves) loop
@@ -655,24 +694,26 @@ begin
     select id, price, 'gm_event' from companies where id = v_id;
   end loop;
 
-  insert into market_events (company_id, headline, pct_change, moves)
+  insert into market_events (company_id, headline, pct_change, moves, article_id)
   values (
     case when v_n = 1 then (p_moves -> 0 ->> 'company_id')::uuid end,
     btrim(p_headline),
     v_top,
-    case when v_n > 1 then p_moves end
+    case when v_n > 1 then p_moves end,
+    p_article_id
   );
 
-  return json_build_object('ok', true, 'affected', v_n, 'headline', btrim(p_headline));
+  return json_build_object('ok', true, 'affected', v_n, 'headline', btrim(p_headline),
+                           'published', p_article_id is not null);
 end;
-$;
+$$;
 
-revoke all on function wex_fire_event(uuid, text, numeric) from public, anon, authenticated;
-revoke all on function wex_set_price(uuid, numeric)        from public, anon, authenticated;
-revoke all on function wex_fire_moves(text, jsonb)         from public, anon, authenticated;
-grant execute on function wex_fire_event(uuid, text, numeric) to service_role;
-grant execute on function wex_set_price(uuid, numeric)        to service_role;
-grant execute on function wex_fire_moves(text, jsonb)         to service_role;
+revoke all on function wex_fire_event(uuid, text, numeric, uuid) from public, anon, authenticated;
+revoke all on function wex_set_price(uuid, numeric)              from public, anon, authenticated;
+revoke all on function wex_fire_moves(text, jsonb, uuid)         from public, anon, authenticated;
+grant execute on function wex_fire_event(uuid, text, numeric, uuid) to service_role;
+grant execute on function wex_set_price(uuid, numeric)              to service_role;
+grant execute on function wex_fire_moves(text, jsonb, uuid)         to service_role;
 
 
 -- ============================================================================
@@ -701,3 +742,67 @@ create table if not exists events (
   payload    jsonb,
   created_at timestamptz default now()
 );
+
+-- Security on the two newsroom tables. Set up in the dashboard, and as found
+-- there on 2026-09-30: RLS on, one select policy each. "read articles" is what
+-- keeps a hidden (and so a held) story secret — anon never receives the row.
+-- anon also held every table privilege; the writes were refused by RLS anyway,
+-- but TRUNCATE is not governed by RLS, so anon is cut back to select. The GM
+-- panel and /api/submit use the service role.
+alter table articles enable row level security;
+alter table events   enable row level security;
+
+drop policy if exists "read articles" on articles;
+create policy "read articles" on articles
+  for select to public using (hidden = false);
+
+drop policy if exists "read events" on events;
+create policy "read events" on events
+  for select to public using (true);
+
+revoke all on articles, events from anon, authenticated;
+grant select on articles, events to anon;
+grant select, insert, update, delete on articles, events to service_role;
+
+
+-- ============================================================================
+-- 8. Held stories, CEO press releases, and who filed what
+-- ============================================================================
+-- See HELD_STORIES_brief.md; the migration was supabase/held.sql. Here, after
+-- section 7, because these reference `articles`.
+--
+--   articles.held            a story waiting for the GM. Always stored with
+--                            hidden = true as well, so every reader keeps
+--                            skipping it with no change. Published by
+--                            wex_fire_event / wex_fire_moves (p_article_id).
+--   articles.press_company_id  set when the story is a CEO's press release.
+--   market_events.article_id   which story a move came from.
+
+alter table articles add column if not exists held boolean not null default false;
+alter table articles add column if not exists press_company_id uuid
+  references companies(id) on delete set null;
+
+alter table market_events add column if not exists article_id uuid
+  references articles(id) on delete set null;
+
+-- One CEO runs one company, and one company has one CEO. A unique index, not
+-- a constraint, so NULLs (no CEO player linked yet) repeat freely.
+create unique index if not exists companies_ceo_player_id_key
+  on companies (ceo_player_id);
+
+-- Who was logged in to WEX when a story was filed. Its own table, locked like
+-- `players`, because anon reads every column of `articles` and the leaderboard
+-- exposes player ids: a column on articles would let anyone unmask a byline.
+-- trading_name is copied at filing time, because wex_reset_all clears display
+-- names and the GM should still know who filed an old story.
+create table if not exists article_filers (
+  article_id   uuid primary key references articles(id) on delete cascade,
+  player_id    uuid references players(id) on delete set null,
+  trading_name text,
+  created_at   timestamptz not null default now()
+);
+
+-- RLS on, no policies => anon gets nothing. Deliberate. Do not add a policy.
+alter table article_filers enable row level security;
+revoke all on article_filers from anon, authenticated;
+grant select, insert, update, delete on article_filers to service_role;

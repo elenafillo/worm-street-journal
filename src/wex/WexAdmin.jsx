@@ -50,12 +50,19 @@ function ExchangeTab({ password, overview, reload, say }) {
   const [broadcast, setBroadcast] = useState(true);
   const [marker, setMarker] = useState("");
   const [busy, setBusy] = useState(false);
+  // A held story loaded into the event form: firing then publishes it in the
+  // same transaction as the move. Kept as an id and looked up in the live
+  // list, so a story settled from another tab simply drops out of the form.
+  const [attachedId, setAttachedId] = useState(null);
 
   const market = overview?.market || {};
   const companies = overview?.companies || [];
+  const held = overview?.held || [];
+  const attached = held.find((s) => s.id === attachedId) || null;
 
+  /** Resolves true when the exchange accepted the action. */
   async function act(action, params, confirmText) {
-    if (confirmText && !confirm(confirmText)) return;
+    if (confirmText && !confirm(confirmText)) return false;
     setBusy(true);
     const { status, data } = await gm(password, action, params);
     setBusy(false);
@@ -70,9 +77,22 @@ function ExchangeTab({ password, overview, reload, say }) {
       !failed
     );
     reload();
+    return !failed;
   }
 
-  const setRow = (i, patch) => setRows((rs) => rs.map((r, k) => (k === i ? { ...r, ...patch } : r)));
+  // "Load into event": the story's headline in the form, and for a press
+  // release, the CEO's company already in the first row.
+  function loadStory(s) {
+    setAttachedId(s.id);
+    setHeadline(s.headline || "");
+    if (s.press_company_id) {
+      setScope("companies");
+      setRows([{ ...newRow(), company_id: s.press_company_id }]);
+      setActiveRow(0);
+    }
+  }
+
+  const setRow =(i, patch) => setRows((rs) => rs.map((r, k) => (k === i ? { ...r, ...patch } : r)));
   const addRow = () => {
     setRows((rs) => (rs.length < MAX_EVENT_COMPANIES ? [...rs, newRow()] : rs));
     setActiveRow(rows.length);
@@ -97,12 +117,15 @@ function ExchangeTab({ password, overview, reload, say }) {
 
   async function fire() {
     if (!headline.trim()) { say("An event needs a headline.", false); return; }
+    const article_id = attached?.id || null;
+    let ok;
     if (scope === "market") {
-      await act("fire_event", {
+      ok = await act("fire_event", {
         company_id: null,
         headline: headline.trim(),
         pct_change: Number(pct),
         broadcast_wsj: broadcast,
+        article_id,
       });
     } else {
       if (rows.some((r) => !r.company_id)) { say("Pick a company in every row, or remove the empty one.", false); return; }
@@ -112,13 +135,19 @@ function ExchangeTab({ password, overview, reload, say }) {
         say("Each company can only be in the event once.", false);
         return;
       }
-      await act("fire_event", {
+      ok = await act("fire_event", {
         headline: headline.trim(),
         moves: moves.map((m) => ({ company_id: m.company_id, pct: m.pct })),
         broadcast_wsj: broadcast,
+        article_id,
       });
     }
-    setHeadline("");
+    // Only on success: a refused event keeps its headline (and its story) so
+    // the Fed can fix the percentage and fire again.
+    if (ok) {
+      setHeadline("");
+      setAttachedId(null);
+    }
   }
 
   // A marker goes on the one company the event form names, or the market.
@@ -161,7 +190,33 @@ function ExchangeTab({ password, overview, reload, say }) {
           : "CLOSED — no trades will go through."}
       </div>
 
+      <div className="gm-section-title">Held Stories ({held.length})</div>
+      {held.length === 0 && (
+        <div className="wex-admin-hint">
+          Nothing waiting. Stories filed with &ldquo;Wait for approval&rdquo;, and every
+          CEO press release, land here before they run.
+        </div>
+      )}
+      {held.map((s) => (
+        <HeldStory
+          key={s.id}
+          s={s}
+          ticker={s.press_company_id ? tickerOf(s.press_company_id) : null}
+          loaded={s.id === attachedId}
+          busy={busy}
+          onLoad={() => loadStory(s)}
+          onPublish={() => act("publish_held", { id: s.id })}
+          onSpike={() => act("spike_held", { id: s.id }, `Spike "${s.headline}"? It will not run.`)}
+        />
+      ))}
+
       <div className="gm-section-title">Fire an Event</div>
+      {attached && (
+        <div className="wex-admin-attached">
+          Publishing with this event: <b>{attached.headline}</b>{" "}
+          <button className="wex-link" onClick={() => setAttachedId(null)}>✕ detach</button>
+        </div>
+      )}
       <input
         className="form-input"
         placeholder="DIRT SCANDAL AT ANNELID CORP"
@@ -254,8 +309,8 @@ function ExchangeTab({ password, overview, reload, say }) {
         {busy
           ? "…"
           : scope === "market"
-            ? `Fire ${signed(Number(pct))} market event`
-            : `Fire event${moves.length ? ": " + moves.map((m) => `${m.ticker} ${signed(m.pct)}`).join(", ") : ""}`}
+            ? `Fire ${signed(Number(pct))} market event${attached ? " and publish" : ""}`
+            : `Fire${attached ? " and publish" : " event"}${moves.length ? ": " + moves.map((m) => `${m.ticker} ${signed(m.pct)}`).join(", ") : ""}`}
       </button>
       <div className="wex-admin-hint">
         Quick hits{scope === "companies" && rows.length > 1 ? ` (row ${activeRow + 1})` : ""}:{" "}
@@ -471,6 +526,37 @@ function DriftControl({ market, busy, act }) {
   );
 }
 
+/** One story waiting for the Fed. Three ways out: load it into the event form
+ *  (fire and publish together), publish it with no move, or spike it. */
+function HeldStory({ s, ticker, loaded, busy, onLoad, onPublish, onSpike }) {
+  const body = s.body || "";
+  return (
+    <div className={`gm-article wex-admin-held ${loaded ? "loaded" : ""}`}>
+      {ticker && <div className="wex-admin-press">Press release · {ticker}</div>}
+      <div style={{ display: "flex", gap: 10 }}>
+        {s.image_url && <img className="wex-admin-thumb" src={s.image_url} alt="" />}
+        <div style={{ minWidth: 0 }}>
+          <div className="gm-article-headline">{s.headline}</div>
+          <div className="gm-article-meta">
+            By {s.author_name}
+            {s.filed_by && <>, filed by <b>{s.filed_by}</b></>}
+          </div>
+          <div className="wex-admin-hint" style={{ marginTop: 0 }}>
+            {body.slice(0, 160)}{body.length > 160 ? "…" : ""}
+          </div>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+        <button className="gm-btn headline-on" disabled={busy || loaded} onClick={onLoad}>
+          {loaded ? "Loaded ↓" : "Load into event"}
+        </button>
+        <button className="gm-btn show" disabled={busy} onClick={onPublish}>Publish, no move</button>
+        <button className="gm-btn delete" disabled={busy} onClick={onSpike}>Spike</button>
+      </div>
+    </div>
+  );
+}
+
 function CompanyControl({ c, busy, act }) {
   const [price, setPrice] = useState("");
   const change = pctChange(c.price, c.open_price);
@@ -512,6 +598,18 @@ function CompanyControl({ c, busy, act }) {
 // ============================================================
 function CompaniesTab({ password, overview, reload, say }) {
   const [busy, setBusy] = useState(false);
+  // For the CEO dropdown. Same list_players as the Players tab; only the ids
+  // and names are used here, so no code reaches this screen.
+  const [players, setPlayers] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data } = await gm(password, "list_players");
+      if (!cancelled && Array.isArray(data)) setPlayers(data);
+    })();
+    return () => { cancelled = true; };
+  }, [password]);
 
   async function save(c, fields) {
     const payload = { ...fields };
@@ -537,7 +635,10 @@ function CompaniesTab({ password, overview, reload, say }) {
         before trading starts.
       </div>
       {(overview?.companies || []).map((c) => (
-        <CompanyEditor key={c.id} c={c} busy={busy} onSave={save} />
+        <CompanyEditor
+          key={c.id} c={c} busy={busy} onSave={save}
+          players={players} companies={overview?.companies || []}
+        />
       ))}
       <button
         className="gm-btn"
@@ -559,17 +660,31 @@ function CompaniesTab({ password, overview, reload, say }) {
   );
 }
 
-function CompanyEditor({ c, busy, onSave }) {
+function CompanyEditor({ c, busy, onSave, players, companies }) {
   const [f, setF] = useState({
     ticker: c.ticker, name: c.name, ceo_name: c.ceo_name || "",
+    ceo_player_id: c.ceo_player_id || "",
     blurb: c.blurb || "", liquidity: c.liquidity, open_price: c.open_price,
     color: c.color || "",
   });
-  const dirty = ["ticker", "name", "ceo_name", "blurb", "liquidity", "color"].some(
+  const dirty = ["ticker", "name", "ceo_name", "ceo_player_id", "blurb", "liquidity", "color"].some(
     (k) => String(f[k] ?? "") !== String(c[k] ?? "")
   ) || Number(f.open_price) !== Number(c.open_price);
 
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  // Claimed players who do not already run another company: one CEO, one
+  // company. The current pick always stays in the list, even if that player
+  // has since been unclaimed (a wex_reset_all keeps the link, clears the name).
+  const takenElsewhere = new Set(
+    companies.filter((o) => o.id !== c.id && o.ceo_player_id).map((o) => o.ceo_player_id)
+  );
+  const ceoOptions = players.filter(
+    (p) => p.id === f.ceo_player_id || (p.is_claimed && !takenElsewhere.has(p.id))
+  );
+  // Deliberately does NOT touch ceo_name. That box is what the exchange shows
+  // ("Led by …"); the linked player's trading name stays off the public pages.
+  const pickCeo = (e) => setF({ ...f, ceo_player_id: e.target.value });
 
   return (
     <div className="gm-article">
@@ -578,6 +693,17 @@ function CompanyEditor({ c, busy, onSave }) {
         <input className="form-input" style={{ flex: "2 1 160px" }} value={f.name} onChange={set("name")} placeholder="Company name" />
         <input className="form-input" style={{ flex: "1 1 140px" }} value={f.ceo_name} onChange={set("ceo_name")} placeholder="CEO (an attendee)" />
       </div>
+      <label className="wex-admin-mini" style={{ display: "block", marginBottom: 6 }}>
+        CEO player — can file press releases for {f.ticker || "this company"}. Never shown to guests.
+        <select className="form-input" value={f.ceo_player_id} onChange={pickCeo}>
+          <option value="">Nobody linked</option>
+          {ceoOptions.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.display_name || "(unclaimed player)"}
+            </option>
+          ))}
+        </select>
+      </label>
       <input className="form-input" style={{ marginBottom: 6 }} value={f.blurb} onChange={set("blurb")} placeholder="One line of flavour" />
 
       {/* Seven fixed swatches, not a free colour picker. The palette is

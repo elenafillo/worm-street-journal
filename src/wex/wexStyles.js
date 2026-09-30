@@ -82,6 +82,18 @@ export const wexStyles = `
     border-left: 4px solid var(--red); background: var(--wex-down-bg);
   }
 
+  /* ---------------- The company you run (CEOs only) ---------------- */
+  .wex-ceo {
+    margin: 20px 0 0; padding: 10px 12px;
+    border-left: 4px solid var(--ink); background: var(--paper-dark);
+  }
+  .wex-ceo-label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 3px; color: var(--muted);
+  }
+  .wex-ceo-co { font-size: 15px; margin-top: 2px; }
+  .wex-ceo-co b { letter-spacing: 1px; }
+  .wex-ceo .wex-link { display: inline-block; margin-top: 6px; color: var(--ink); }
+
   /* ---------------- Your fortune over time ----------------
      A disclosure, not a card: it sits between the header and the desk, and when
      it is folded the desk should look exactly as it did before it existed. */
@@ -398,6 +410,20 @@ export const wexStyles = `
     font-size: 12px; color: var(--muted); cursor: pointer;
   }
   .wex-admin-hint { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.6; }
+
+  /* Held stories: red edge like the newsroom's HELD tag; ink once loaded
+     into the event form, so it is clear which one "Fire and publish" means. */
+  .wex-admin-held { border-left-color: var(--red); }
+  .wex-admin-held.loaded { border-left-color: var(--ink); background: var(--paper-dark); }
+  .wex-admin-press {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 2px;
+    color: var(--red); font-weight: bold; margin-bottom: 4px;
+  }
+  .wex-admin-thumb { width: 56px; height: 56px; object-fit: cover; flex-shrink: 0; }
+  .wex-admin-attached {
+    padding: 8px 12px; margin-bottom: 8px; font-size: 13px;
+    background: var(--paper-dark); border-left: 4px solid var(--ink);
+  }
   .wex-admin-mini {
     display: flex; flex-direction: column; gap: 2px;
     font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted);

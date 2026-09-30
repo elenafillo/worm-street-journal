@@ -42,6 +42,30 @@ async function del(path) {
   if (!res.ok) throw new Error(`DELETE ${path} failed`);
 }
 
+/** Stories waiting for the Fed (see HELD_STORIES_brief.md), oldest first, each
+ *  with the trading name of whoever filed it. Never fails the overview: a
+ *  database without supabase/held.sql just has no held stories. */
+async function heldStories() {
+  try {
+    const [stories, filers] = await Promise.all([
+      rest("articles",
+        "select=id,author_name,headline,body,image_url,press_company_id,created_at&held=eq.true&order=created_at.asc"),
+      rest("article_filers", "select=article_id,trading_name"),
+    ]);
+    const filedBy = new Map(filers.map((f) => [f.article_id, f.trading_name]));
+    return stories.map((s) => ({ ...s, filed_by: filedBy.get(s.id) || null }));
+  } catch {
+    return [];
+  }
+}
+
+/** Settle a held story without a market move. The `held=eq.true` filter means
+ *  a story someone already fired or spiked is left alone and reported. */
+async function settleHeld(id, fields) {
+  const rows = await patch(`articles?id=eq.${id}&held=eq.true`, { held: false, ...fields });
+  return Array.isArray(rows) && rows.length > 0;
+}
+
 const pick = (list) => list[Math.floor(Math.random() * list.length)];
 
 /** A code no one holds yet. The unique index is the real guarantee; this just
@@ -79,17 +103,19 @@ export default async function handler(req, res) {
         // it just caused rather than lagging a poll behind them.
         await rpc("wex_drift", {});
 
-        const [companies, state, board, events] = await Promise.all([
+        const [companies, state, board, events, held] = await Promise.all([
           rest("companies", "select=*&order=sort_order"),
           rest("market_state", "select=*&id=eq.1"),
           rest("leaderboard", "select=*&order=net_worth.desc"),
           rest("market_events", "select=*&order=created_at.desc&limit=8"),
+          heldStories(),
         ]);
         return res.status(200).json({
           companies,
           market: state[0] || {},
           leaderboard: board,
           events,
+          held,
         });
       }
 
@@ -166,12 +192,15 @@ export default async function handler(req, res) {
         if (moves.length > 4) {
           return res.status(200).json({ ok: false, error: "Four companies at most — any more will not fit on the wall." });
         }
+        // A held story to publish in the same transaction as the move.
+        const articleId = params.article_id || null;
         const result = moves.length > 1
-          ? await rpc("wex_fire_moves", { p_headline: params.headline, p_moves: moves })
+          ? await rpc("wex_fire_moves", { p_headline: params.headline, p_moves: moves, p_article_id: articleId })
           : await rpc("wex_fire_event", {
               p_company: moves[0]?.company_id || params.company_id || null,
               p_headline: params.headline,
               p_pct: moves.length ? moves[0].pct : Number(params.pct_change),
+              p_article_id: articleId,
             });
         // PostgREST's own error, not the function's: the function is not there.
         if (result?.code === "PGRST202") {
@@ -191,8 +220,25 @@ export default async function handler(req, res) {
             payload: { message: params.headline },
           });
         }
-        return res.status(200).json({ ok: true, ...result });
+        return res.status(200).json({
+          ok: true, ...result,
+          ...(result.published ? { note: "Fired, and the story is on the paper." } : {}),
+        });
       }
+
+      // The other two ways to settle a held story. (The third is fire_event
+      // with an article_id, above.)
+      case "publish_held":
+        return res.status(200).json(await settleHeld(params.id, { hidden: false })
+          ? { ok: true, note: "Published, no market move." }
+          : { ok: false, error: "That story has already been dealt with." });
+
+      case "spike_held":
+        // Stays hidden: exactly what the newsroom's Hide does, so it can
+        // still be shown from there if the Fed changes its mind.
+        return res.status(200).json(await settleHeld(params.id, {})
+          ? { ok: true, note: "Spiked. It will not run." }
+          : { ok: false, error: "That story has already been dealt with." });
 
       // A note on the timeline, with no price consequence. The chart draws a
       // vertical rule for every market_events row, so this is how you mark
@@ -313,6 +359,9 @@ export default async function handler(req, res) {
         for (const k of ["ticker", "name", "ceo_name", "blurb", "liquidity", "sort_order", "is_listed", "color"]) {
           if (params[k] !== undefined) fields[k] = params[k];
         }
+        // The player who can file press releases for this company. "" from
+        // the dropdown's "nobody" option means unlink.
+        if (params.ceo_player_id !== undefined) fields.ceo_player_id = params.ceo_player_id || null;
         if (params.id) {
           // Changing open_price rebases the % change everyone sees, so it is
           // only settable deliberately, never as a side effect of a rename.
@@ -320,7 +369,16 @@ export default async function handler(req, res) {
             fields.open_price = Number(params.open_price);
             fields.price = Number(params.open_price);
           }
-          await patch(`companies?id=eq.${params.id}`, fields);
+          try {
+            await patch(`companies?id=eq.${params.id}`, fields);
+          } catch (err) {
+            // One CEO, one company (supabase/held.sql). The dropdown already
+            // hides taken players, so this is two tabs racing each other.
+            if (String(err.message).includes("companies_ceo_player_id_key")) {
+              return res.status(200).json({ ok: false, error: "That worm already runs another company." });
+            }
+            throw err;
+          }
           return res.status(200).json({ ok: true });
         }
         const startPrice = Number(params.open_price || 100000);

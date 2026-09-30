@@ -30,8 +30,8 @@ Two other `.jsx` files sit alongside it. Both are **untracked, kept locally for 
 | Broadsheet | `/#broadsheet` | Fixed-canvas newspaper front page — **default landing page** (see below) · nav **WSJ** |
 | Feed | `/#display` | Vertical article feed, auto-refreshes every 4s, alternates image left/right — tab hidden from nav for now |
 | Exchange | `/#trade` | Guest phone dashboard: three-word gate, portfolio, buy/sell · nav **WEX**, becoming **TRADE** in phase 6 |
-| Submit | `/#submit` | Guest article form with optional image upload (≤5MB) · nav **FILE** |
-| GM Panel | `/#gm` | Password-gated moderation: hide/delete articles, headline toggle, fire BREAKING NEWS banner · nav **FED** |
+| Submit | `/#submit` | Guest article form with optional image upload (≤5MB). **Needs a WEX login** (the button is greyed out until then). "Wait for approval" holds a story for the GM; CEOs can file press releases · nav **FILE** |
+| GM Panel | `/#gm` | Password-gated moderation: hide/delete articles, headline toggle, fire BREAKING NEWS banner. The Exchange desk has **Held Stories**: fire a market event and publish together, publish with no move, or spike · nav **FED** |
 | WEX dashboard | `/#wex` | Public wall panel projected beside the broadsheet: price chart, legend, market health, leaderboards, tape. Scrolls; reflows to one column on a phone · nav **WEX**. Params: `?window=15m\|1h\|all`, `?y=pct\|abs`, `?only=ANL,MLC` |
 | Price board | `/#board` | **Planned (phase 7, optional)** — seven enormous price rows + sparklines. Off-nav, like Feed. |
 
@@ -41,16 +41,19 @@ Phase 6 takes it to five: **WSJ · WEX · TRADE · FILE · FED**, with WEX movin
 the new dashboard and TRADE taking over the phone screen it used to point at.
 
 ### Data model (Supabase)
-- `articles` — `id, author_name, headline, body, image_url, hidden, can_be_headline, article_type, scheduled_at, created_at`
+- `articles` — `id, author_name, headline, body, image_url, hidden, can_be_headline, article_type, scheduled_at, created_at, held, press_company_id`
   - `article_type`: `'article'` (default) | `'notice'` | `'entertainment'`
   - `scheduled_at`: TIMESTAMPTZ, only set for `entertainment` rows; used for ordering and auto-expiry
+  - `held`: waiting for the GM. Always stored with `hidden = true` too, so every reader skips it unchanged. `press_company_id`: set on a CEO's press release (which is otherwise an ordinary `'article'`). See [HELD_STORIES_brief.md](HELD_STORIES_brief.md).
+- `article_filers` — `article_id, player_id, trading_name, created_at`: who filed each story, for the GM only. RLS on with no policies, like `players`, so anon can never unmask a byline.
 - `events` — `id, type, payload, created_at` (used for breaking news signals; types: `breaking_news`, `clear_breaking`)
 - Storage bucket: `wsj-images` (public)
-- RLS: enabled on both tables. Public anon role has SELECT and INSERT only — no UPDATE or DELETE. All GM mutations go through a Vercel serverless function (`api/gm.js`) using the service role key, which bypasses RLS.
+- RLS: enabled on `articles` and `events`. Anon may only SELECT, and on `articles` only rows where `hidden = false`, which is what keeps held stories secret. Every write goes through a Vercel serverless function using the service role key. Written down in [supabase/schema.sql](supabase/schema.sql) section 7.
 
 ### Notable implementation details
 - **GM panel security** — password is checked server-side in `api/gm.js` (Vercel serverless function). The GM password and Supabase service role key live in Vercel env vars and are never sent to the browser. The frontend only holds the anon key (public by design).
-- **Submission code** — guest article submission is gated by a code field in the form. On submit, the frontend POSTs to `api/submit.js` (Vercel serverless function) which checks the code against `SUBMISSION_CODE` env var before inserting into Supabase using the service role key. The code never touches the client bundle. Supabase RLS has INSERT removed from the anon role on `articles`, so direct API calls without the code are also blocked. To change the code, update `SUBMISSION_CODE` in the Vercel dashboard (and `.env.local` for local dev).
+- **Filing needs a WEX login** — replaced the old shared `SUBMISSION_CODE` (no longer read; delete it from Vercel). The form reads the guest's WEX code from localStorage, and `api/submit.js` refuses any story without a claimed player's code. The filer's trading name goes into `article_filers` for the GM, and a note under the byline tells the guest so; only the typed byline is printed. Press releases are checked server-side against `companies.ceo_player_id`, which is set from the GM's Companies tab (one CEO per company, enforced by a unique index).
+- **Held stories** — `wex_fire_event` / `wex_fire_moves` take an optional `p_article_id` and publish that held story in the same transaction as the price move, so nobody can read a story and trade on it before the market reacts. A second fire of the same story is refused.
 - **No real-time websockets** — `supabase.subscribe()` is a `setInterval` polling every 4 seconds. Works fine for the party; upgrade to Supabase Realtime channels if you want true push.
 - **Price drift ("the weather")** — every `drift_interval_seconds`, each listed company's price is multiplied by `(1 + d/100)` where `d` is a normal draw with an economy-wide mean and standard deviation. All four dials live in `market_state` and are set from GM → WEX → Exchange → The Weather, with presets (Gentle swell / Choppy / Slow bleed / Bull run / Storm). **Off by default.** Its point is that buy pressure alone only pushes prices up, so without it the ranking freezes once everyone is invested and holding is never a decision; a negative mean is what makes cash worth holding.
   - **Driven by `pg_cron`**, which is free on Supabase — enable it under Database → Extensions; [supabase/drift.sql](supabase/drift.sql) schedules the job. It fires `select wex_drift();` **every minute, unconditionally**: the job is dumb on purpose, because all the conditions live in the function, which returns immediately unless drift is on, the market is open, and a full interval has elapsed. So the GM weather switch governs everything and the schedule never needs touching. A one-minute heartbeat serves any interval — four calls in five cost a single cheap SELECT.
@@ -121,13 +124,14 @@ Working list. WEX has its own detailed plan and status table in
 - [ ] **Print button on the broadsheet** — saves the current display as an image. Paired with an "Extra, extra" button in the GM panel that captures the display and runs the old-school spinning-newspaper TV effect. Needs a capture library (e.g. `html-to-image`); nothing installed yet.
 - [ ] **Accent colour per box type** — vary the accent for article vs notice vs event. Right now `article_type` only drives routing and text labels; notices and events share `.sidebar-notice`.
 - [ ] **Ticker tag on articles** — link a story to a WEX stock. Now possible: `companies.ticker` exists.
-- [ ] **CEO press releases** — a CEO files a story that moves their own share price. Schema is ready (`companies.ceo_player_id`); would add `article_type='press_release'` going through GM approval.
+- [x] ~~**CEO press releases**~~ ✓ Done, with held stories for everyone. See [HELD_STORIES_brief.md](HELD_STORIES_brief.md).
+- [ ] **"PRESS RELEASE" kicker on the broadsheet** for articles where `press_company_id` is set. Optional.
 - [ ] Article image moderation in the GM panel (preview before showing).
 - [ ] Sound effect when the BREAKING banner fires.
 - [ ] **Short selling** — deferred from WEX v0. `holdings.shares` is already signed and `trades.side` is a text check, so no migration is needed.
 - [x] ~~**Price drift** — a cron nudging prices between trades~~ ✓ Done, without a cron. See the note above and [supabase/drift.sql](supabase/drift.sql).
 - [ ] **Event deck** — pre-written GM cards (dirt scandal −10%, etc). See WEX_plan.md §5; marked *maybe*.
-- [x] ~~Party-code gate on `/#submit`~~ ✓ Done
+- [x] ~~Party-code gate on `/#submit`~~ ✓ Done, then replaced by a WEX login.
 - [x] ~~Deploy to Vercel~~ ✓ Done — https://worm-street-journal.vercel.app
 
 ---

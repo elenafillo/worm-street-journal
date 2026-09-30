@@ -4,6 +4,7 @@ import { supabase } from "./lib/supabase.js";
 import { DISPLAY_STYLE, PARTY_THURSDAY, BREAKING_DURATION_MS } from "./lib/config.js";
 import WexTrade from "./wex/WexTrade.jsx";
 import WexAdmin from "./wex/WexAdmin.jsx";
+import { storedCode, wex } from "./wex/wexApi.js";
 import WexDash from "./wex/WexDash.jsx";
 import { wexStyles } from "./wex/wexStyles.js";
 import { dashStyles } from "./wex/dashStyles.js";
@@ -339,6 +340,42 @@ const styles = `
     margin-top: 16px;
   }
 
+  /* Who is filing: the note under the byline, and the gate above the button. */
+  .form-note {
+    font-family: 'IM Fell English', serif;
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+  .form-note b { color: var(--ink); }
+
+  .form-login-note {
+    background: var(--paper-dark);
+    border-left: 4px solid var(--ink);
+    padding: 14px 16px;
+    font-family: 'IM Fell English', serif;
+    font-size: 14px;
+    line-height: 1.5;
+    margin-bottom: 12px;
+  }
+  .form-login-note a { color: var(--ink); font-weight: bold; }
+
+  .form-check {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    font-family: 'IM Fell English', serif;
+    font-size: 15px;
+    margin-bottom: 12px;
+    cursor: pointer;
+  }
+  .form-check input {
+    width: 18px; height: 18px; margin-top: 2px;
+    flex-shrink: 0; accent-color: var(--ink);
+  }
+  .form-check small { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+
   .char-count {
     font-family: 'IM Fell English', serif;
     font-size: 11px;
@@ -376,6 +413,10 @@ const styles = `
     opacity: 0.5;
     border-left-color: var(--muted);
   }
+
+  /* Waiting for the Fed. Not faded like a hidden story: it needs a decision. */
+  .gm-article.held-article { border-left-color: var(--red); }
+  .gm-tag-held { color: var(--red); }
 
   .gm-article-headline {
     font-family: 'Playfair Display', serif;
@@ -669,7 +710,10 @@ const styles = `
   }
 
   [data-style="modern"] .success-msg,
-  [data-style="modern"] .error-msg {
+  [data-style="modern"] .error-msg,
+  [data-style="modern"] .form-note,
+  [data-style="modern"] .form-login-note,
+  [data-style="modern"] .form-check {
     font-family: 'Inter', Arial, sans-serif;
   }
 
@@ -1464,12 +1508,45 @@ function SubmitForm() {
   const [dragOver, setDragOver] = useState(false);
   const [selectedDay, setSelectedDay] = useState(null); // index 0–3
   const [selectedTime, setSelectedTime] = useState("");
-  const [submissionCode, setSubmissionCode] = useState("");
+  const [held, setHeld] = useState(false);     // "Wait for approval"
+  const [press, setPress] = useState(false);   // "Press release" (CEOs only)
   const [submitting, setSubmitting] = useState(false);
-  const [success, setSuccess] = useState(false);
+  const [success, setSuccess] = useState("");  // the confirmation to show, or ""
   const [error, setError] = useState("");
   const fileRef = useRef();
   const partyDays = getPartyDays();
+
+  // Who is filing. A WEX login is the gate for every story (it replaced the
+  // shared submission code), and the same check says whether they run a
+  // company. undefined = still checking, null = not logged in.
+  const [who, setWho] = useState(undefined);
+
+  // Checked on arrival and whenever the page regains focus, so a guest who
+  // logs in on TRADE in another tab can come straight back and file.
+  useEffect(() => {
+    let cancelled = false;
+    async function check() {
+      const code = storedCode();
+      if (!code) { if (!cancelled) setWho(null); return; }
+      try {
+        const { status, data } = await wex("login", { code });
+        if (cancelled) return;
+        setWho(status === 200 && data.player
+          ? { code, name: data.player.display_name, ceo_of: data.ceo_of || null }
+          : null);
+      } catch {
+        // Flaky party wifi: keep whatever we knew rather than locking them out.
+        if (!cancelled) setWho(w => (w === undefined ? null : w));
+      }
+    }
+    check();
+    window.addEventListener("focus", check);
+    return () => { cancelled = true; window.removeEventListener("focus", check); };
+  }, []);
+
+  // Notices and events never move markets, so neither option applies to them.
+  const isPress = press && Boolean(who?.ceo_of) && !isNoticeMode;
+  const isHeld = isPress || (held && !isNoticeMode);
 
   const headlineMax = isNoticeMode ? 40 : 120;
   const bodyMax = isNoticeMode ? 160 : 600;
@@ -1520,8 +1597,8 @@ function SubmitForm() {
         return;
       }
     }
-    if (!submissionCode.trim()) {
-      setError("Please enter the submission code.");
+    if (!who) {
+      setError("Log in to WEX first — tap TRADE, then come back.");
       return;
     }
     setSubmitting(true);
@@ -1550,7 +1627,7 @@ function SubmitForm() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          submission_code: submissionCode,
+          code: who.code,
           author_name: form.author_name,
           headline: form.headline,
           body: form.body,
@@ -1558,20 +1635,31 @@ function SubmitForm() {
           article_type,
           scheduled_at,
           can_be_headline: article_type === "article",
+          held: isHeld,
+          press: isPress,
         }),
       });
       const result = await res.json();
 
       if (!res.ok) {
+        // Their code stopped working (regenerated, or the account was
+        // unclaimed) — grey the button out again until they log back in.
+        if (result.needs_login) setWho(null);
         setError(result.error || "Something went wrong. Please try again.");
       } else if (Array.isArray(result) && result[0]?.id) {
-        setSuccess(true);
+        setSuccess(
+          isHeld ? "✓ Filed. Your story is with the Fed and runs when they approve it."
+          : isNoticeMode ? "✓ Your notice has been posted to the board."
+          : "✓ Your dispatch has been filed. It will appear on the wall momentarily."
+        );
         setForm(f => ({ ...f, headline: "", body: "" }));
         setImageFile(null);
         setImagePreview(null);
         setSelectedDay(null);
         setSelectedTime("");
-        setTimeout(() => setSuccess(false), 5000);
+        setHeld(false);
+        setPress(false);
+        setTimeout(() => setSuccess(""), 5000);
       } else {
         setError("Something went wrong. Please try again.");
         console.error("Submit result:", result);
@@ -1615,6 +1703,12 @@ function SubmitForm() {
           placeholder="e.g. Reginald Earthworm III"
           maxLength={60}
         />
+        {who && (
+          <div className="form-note">
+            Note that the Fed will be able to see your name <b>{who.name}</b> when
+            you file a story. Only your byline gets printed.
+          </div>
+        )}
       </div>
 
       <div className="form-group">
@@ -1705,32 +1799,50 @@ function SubmitForm() {
         </div>
       )}
 
-      <div className="form-group">
-        <label className="form-label">Submission Code</label>
-        <input
-          className="form-input"
-          type="text"
-          value={submissionCode}
-          onChange={e => setSubmissionCode(e.target.value)}
-          placeholder="Enter the code to file your story"
-        />
-      </div>
+      {who && !isNoticeMode && (
+        <div className="form-group">
+          {who.ceo_of && (
+            <label className="form-check">
+              <input type="checkbox" checked={press} onChange={e => setPress(e.target.checked)} />
+              <span>
+                Press release for {who.ceo_of.ticker}
+                <small>An official statement from {who.ceo_of.name}. Always waits for the Fed&apos;s approval.</small>
+              </span>
+            </label>
+          )}
+          <label className="form-check">
+            <input
+              type="checkbox"
+              checked={isHeld}
+              disabled={isPress}
+              onChange={e => setHeld(e.target.checked)}
+            />
+            <span>
+              Wait for approval
+              <small>Not published straight away. The Fed reads it first, and may move the market with it.</small>
+            </span>
+          </label>
+        </div>
+      )}
+
+      {who === null && (
+        <div className="form-login-note">
+          You need to be logged in to WEX to file a story. <a href="#trade">Log in on TRADE</a> with
+          the words on your card, then come back here.
+        </div>
+      )}
 
       {error && <div className="error-msg">{error}</div>}
 
-      <button className="submit-btn" onClick={handleSubmit} disabled={submitting}>
+      <button className="submit-btn" onClick={handleSubmit} disabled={submitting || !who}>
         {submitting
           ? <><span className="spinner" />Filing...</>
+          : who === undefined ? "Checking your papers…"
+          : isPress ? "File the Press Release"
           : isNoticeMode ? "Post to Noticeboard" : "File to the Journal"}
       </button>
 
-      {success && (
-        <div className="success-msg">
-          {isNoticeMode
-            ? "✓ Your notice has been posted to the board."
-            : "✓ Your dispatch has been filed. It will appear on the wall momentarily."}
-        </div>
-      )}
+      {success && <div className="success-msg">{success}</div>}
     </div>
   );
 }
@@ -1931,11 +2043,16 @@ function GMPanel() {
 
       <div className="gm-section-title">All Articles ({articles.length})</div>
       {articles.map(a => (
-        <div key={a.id} className={`gm-article ${a.hidden ? "hidden-article" : ""}`}>
+        <div key={a.id} className={`gm-article ${a.held ? "held-article" : a.hidden ? "hidden-article" : ""}`}>
           <div className="gm-article-headline">{a.headline}</div>
           <div className="gm-article-meta">
-            By {a.author_name} · {formatDate(a.created_at)} {formatTime(a.created_at)}
-            {a.hidden && " · HIDDEN"}
+            By {a.author_name}
+            {a.filed_by && <>, filed by <b>{a.filed_by}</b></>}
+            {" · "}{formatDate(a.created_at)} {formatTime(a.created_at)}
+            {a.held
+              ? <b className="gm-tag-held"> · HELD — awaiting approval</b>
+              : a.hidden && " · HIDDEN"}
+            {a.press_ticker && <b> · PRESS RELEASE · {a.press_ticker}</b>}
             {a.article_type === "notice" && " · NOTICE"}
             {a.article_type === "entertainment" && ` · EVENT${a.scheduled_at ? " " + formatEventTime(a.scheduled_at) : ""}`}
           </div>
@@ -1943,7 +2060,7 @@ function GMPanel() {
             {a.body.slice(0, 120)}{a.body.length > 120 ? "…" : ""}
           </div>
           <button className={`gm-btn ${a.hidden ? "show" : "hide"}`} onClick={() => toggleHide(a)}>
-            {a.hidden ? "Show" : "Hide"}
+            {a.held ? "Publish, no move" : a.hidden ? "Show" : "Hide"}
           </button>
           {(!a.article_type || a.article_type === "article") && (
             <button

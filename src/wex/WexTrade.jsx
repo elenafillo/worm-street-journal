@@ -588,6 +588,7 @@ export default function WexTrade() {
         setData({
           player: d.player, holdings: d.holdings,
           companies: d.companies, market: d.market,
+          trades: d.trades, ceo_of: d.ceo_of,
         });
       } else {
         setToast({ good: false, text: d.error || "The trade did not go through." });
@@ -656,6 +657,18 @@ export default function WexTrade() {
         open={fortuneOpen}
         onToggle={toggleFortune}
       />
+
+      {/* Only a CEO gets this. The server says which company (`ceo_of`);
+          it is null for everyone else. */}
+      {data.ceo_of && (
+        <div className="wex-ceo">
+          <div className="wex-ceo-label">Chief Executive of</div>
+          <div className="wex-ceo-co">
+            <b>{data.ceo_of.ticker}</b> · {data.ceo_of.name}
+          </div>
+          <a className="wex-link" href="#submit">File a press release →</a>
+        </div>
+      )}
 
       <div className="wex-section-label">The Listings</div>
       {companies.map((co) => (
