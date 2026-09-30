@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 
 import { supabase } from "./lib/supabase.js";
-import { DISPLAY_STYLE, PARTY_THURSDAY, BREAKING_DURATION_MS } from "./lib/config.js";
+import { DISPLAY_STYLE, PARTY_THURSDAY } from "./lib/config.js";
+import { useBreaking } from "./lib/useBreaking.js";
 import WexTrade from "./wex/WexTrade.jsx";
 import WexAdmin from "./wex/WexAdmin.jsx";
 import { storedCode, wex } from "./wex/wexApi.js";
@@ -1144,25 +1145,29 @@ function getPartyDays() {
 // ============================================================
 const TICKER_SEPARATOR = "     "; // em spaces between repetitions
 
-function Ticker({ message }) {
+// `messages` is every live banner, newest first. They share one strip rather
+// than queueing, so a second headline never waits for the first to expire.
+function Ticker({ messages }) {
   const measureRef = useRef();
   const [measured, setMeasured] = useState({ segW: 0, reps: 6 });
+
+  // One segment: for each message, big spaces + emoji + BREAKING: + message + emoji
+  const segment = messages
+    .map(m => TICKER_SEPARATOR + "⚡ BREAKING: " + m + " ⚡")
+    .join("");
 
   useEffect(() => {
     if (!measureRef.current) return;
     const segW = measureRef.current.offsetWidth;
     const reps = Math.max(6, Math.ceil((3 * window.innerWidth) / segW));
     setMeasured({ segW, reps });
-  }, [message]);
+  }, [segment]);
 
   const { segW, reps } = measured;
   const tickerStyle = segW > 0 ? {
     "--ticker-offset": `-${segW}px`,
     "--ticker-duration": `${segW / 120}s`,
   } : {};
-
-  // Each repeated segment: big spaces + emoji + BREAKING: + message + emoji
-  const segment = TICKER_SEPARATOR + "⚡ BREAKING: " + message + " ⚡";
 
   return (
     <div className="breaking-banner">
@@ -1184,10 +1189,8 @@ function Ticker({ message }) {
 // ============================================================
 function DisplayScreen() {
   const [articles, setArticles] = useState([]);
-  const [breaking, setBreaking] = useState(null);
   const [loading, setLoading] = useState(true);
-  const breakingEventIdRef = useRef(null);
-  const breakingTimerRef = useRef(null);
+  const { live: breaking } = useBreaking();
 
   async function fetchArticles() {
     const data = await supabase.query("articles", {
@@ -1200,41 +1203,9 @@ function DisplayScreen() {
     setLoading(false);
   }
 
-  async function checkEvents() {
-    const data = await supabase.query("events", {
-      select: "*",
-      order: "created_at.desc",
-    });
-    if (Array.isArray(data) && data.length > 0) {
-      const latest = data[0];
-      if (latest.type === "breaking_news") {
-        if (latest.id !== breakingEventIdRef.current) {
-          breakingEventIdRef.current = latest.id;
-          if (breakingTimerRef.current) clearTimeout(breakingTimerRef.current);
-          setBreaking(latest.payload?.message || "BREAKING NEWS");
-          breakingTimerRef.current = setTimeout(() => {
-            setBreaking(null);
-            breakingEventIdRef.current = null;
-          }, BREAKING_DURATION_MS);
-        }
-      } else if (latest.type === "clear_breaking") {
-        if (breakingTimerRef.current) clearTimeout(breakingTimerRef.current);
-        breakingTimerRef.current = null;
-        breakingEventIdRef.current = null;
-        setBreaking(null);
-      }
-    }
-  }
-
   useEffect(() => {
     fetchArticles();
-    const unsub1 = supabase.subscribe("articles", fetchArticles);
-    const unsub2 = supabase.subscribe("events", checkEvents);
-    return () => {
-      unsub1();
-      unsub2();
-      if (breakingTimerRef.current) clearTimeout(breakingTimerRef.current);
-    };
+    return supabase.subscribe("articles", fetchArticles);
   }, []);
 
   const today = new Date().toLocaleDateString("en-GB", {
@@ -1254,7 +1225,7 @@ function DisplayScreen() {
         <hr className="masthead-rule" />
       </div>
 
-      {breaking && <Ticker message={breaking} />}
+      {breaking.length > 0 && <Ticker messages={breaking.map(b => b.message)} />}
 
       <div className="articles-grid">
         {loading && (
@@ -1307,11 +1278,9 @@ function BroadsheetScreen() {
   const speed = Math.max(5, parseInt(params.get("speed") || "15", 10));
 
   const [articles, setArticles] = useState([]);
-  const [breaking, setBreaking] = useState(null);
   const [loading, setLoading] = useState(true);
   const [headlineIdx, setHeadlineIdx] = useState(0);
-  const breakingEventIdRef = useRef(null);
-  const breakingTimerRef = useRef(null);
+  const { live: breaking } = useBreaking();
 
   async function fetchArticles() {
     const data = await supabase.query("articles", {
@@ -1322,41 +1291,9 @@ function BroadsheetScreen() {
     setLoading(false);
   }
 
-  async function checkEvents() {
-    const data = await supabase.query("events", {
-      select: "*",
-      order: "created_at.desc",
-    });
-    if (Array.isArray(data) && data.length > 0) {
-      const latest = data[0];
-      if (latest.type === "breaking_news") {
-        if (latest.id !== breakingEventIdRef.current) {
-          breakingEventIdRef.current = latest.id;
-          if (breakingTimerRef.current) clearTimeout(breakingTimerRef.current);
-          setBreaking(latest.payload?.message || "BREAKING NEWS");
-          breakingTimerRef.current = setTimeout(() => {
-            setBreaking(null);
-            breakingEventIdRef.current = null;
-          }, BREAKING_DURATION_MS);
-        }
-      } else if (latest.type === "clear_breaking") {
-        if (breakingTimerRef.current) clearTimeout(breakingTimerRef.current);
-        breakingTimerRef.current = null;
-        breakingEventIdRef.current = null;
-        setBreaking(null);
-      }
-    }
-  }
-
   useEffect(() => {
     fetchArticles();
-    const unsub1 = supabase.subscribe("articles", fetchArticles);
-    const unsub2 = supabase.subscribe("events", checkEvents);
-    return () => {
-      unsub1();
-      unsub2();
-      if (breakingTimerRef.current) clearTimeout(breakingTimerRef.current);
-    };
+    return supabase.subscribe("articles", fetchArticles);
   }, []);
 
   const visibleArticles = articles.filter(a => !a.article_type || a.article_type === "article");
@@ -1419,7 +1356,7 @@ function BroadsheetScreen() {
           <hr className="masthead-rule" />
         </div>
 
-        {breaking && <Ticker message={breaking} />}
+        {breaking.length > 0 && <Ticker messages={breaking.map(b => b.message)} />}
 
         <div className="broadsheet-body">
           <div className="broadsheet-main">
@@ -1859,26 +1796,10 @@ function GMPanel() {
   const [desk, setDesk] = useState("wsj");
   const [articles, setArticles] = useState([]);
   const [breakingMsg, setBreakingMsg] = useState("");
-  const [activeBreaking, setActiveBreaking] = useState(null);
-  const [breakingExpiresAt, setBreakingExpiresAt] = useState(null);
-  const [countdown, setCountdown] = useState(null);
-
-  async function fetchBreaking() {
-    const data = await supabase.query("events", { select: "*", order: "created_at.desc" });
-    if (Array.isArray(data) && data.length > 0) {
-      const latest = data[0];
-      if (latest.type === "breaking_news") {
-        const expiresAt = new Date(latest.created_at).getTime() + BREAKING_DURATION_MS;
-        if (Date.now() < expiresAt) {
-          setActiveBreaking(latest.payload?.message || "BREAKING NEWS");
-          setBreakingExpiresAt(expiresAt);
-          return;
-        }
-      }
-    }
-    setActiveBreaking(null);
-    setBreakingExpiresAt(null);
-  }
+  // The same rule as the wall screens, so LIVE here means live there too,
+  // including banners fired from the Exchange desk.
+  const { live: liveBreaking, refresh: refreshBreaking } = useBreaking();
+  const [now, setNow] = useState(Date.now);
 
   async function gmAction(action, params = {}) {
     const res = await fetch("/api/gm", {
@@ -1908,7 +1829,6 @@ function GMPanel() {
     const data = await res.json();
     if (Array.isArray(data)) setArticles(data);
     setAuthed(true);
-    fetchBreaking();
   }
 
   async function toggleHide(article) {
@@ -1933,27 +1853,22 @@ function GMPanel() {
     const msg = breakingMsg.trim();
     await gmAction("trigger_breaking", { message: msg });
     setBreakingMsg("");
-    setActiveBreaking(msg);
-    setBreakingExpiresAt(Date.now() + BREAKING_DURATION_MS);
+    refreshBreaking();
   }
 
   async function clearBreaking() {
     await gmAction("clear_breaking");
-    setActiveBreaking(null);
-    setBreakingExpiresAt(null);
+    refreshBreaking();
   }
 
+  // Ticks the countdowns. Polls only fetch every 4s, so a banner is dropped
+  // here the moment it expires rather than up to one poll later.
   useEffect(() => {
-    if (!breakingExpiresAt) { setCountdown(null); return; }
-    function tick() {
-      const remaining = Math.max(0, Math.ceil((breakingExpiresAt - Date.now()) / 1000));
-      setCountdown(remaining);
-      if (remaining === 0) { setActiveBreaking(null); setBreakingExpiresAt(null); }
-    }
-    tick();
-    const id = setInterval(tick, 1000);
+    if (!liveBreaking.length) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [breakingExpiresAt]);
+  }, [liveBreaking.length]);
+  const liveNow = liveBreaking.filter(b => b.expiresAt > now);
 
   if (!authed) {
     return (
@@ -2018,27 +1933,28 @@ function GMPanel() {
         </button>
       </div>
       <button className="gm-btn hide" onClick={clearBreaking} style={{ marginBottom: "8px" }}>
-        Clear breaking banner
+        {liveNow.length > 1 ? "Clear all breaking banners" : "Clear breaking banner"}
       </button>
       <div style={{
         marginBottom: "16px",
         padding: "8px 12px",
-        background: activeBreaking ? "var(--red)" : "var(--paper-dark)",
-        color: activeBreaking ? "var(--paper)" : "var(--muted)",
+        background: liveNow.length ? "var(--red)" : "var(--paper-dark)",
+        color: liveNow.length ? "var(--paper)" : "var(--muted)",
         fontFamily: "'IM Fell English', serif",
         fontSize: "13px",
-        borderLeft: `4px solid ${activeBreaking ? "var(--red)" : "var(--paper-darker)"}`,
+        borderLeft: `4px solid ${liveNow.length ? "var(--red)" : "var(--paper-darker)"}`,
       }}>
-        {activeBreaking ? (
-          <>
-            <strong>LIVE:</strong> {activeBreaking}
-            {countdown !== null && (
+        {liveNow.length ? liveNow.map(b => {
+          const secs = Math.max(0, Math.ceil((b.expiresAt - now) / 1000));
+          return (
+            <div key={b.id}>
+              <strong>LIVE:</strong> {b.message}
               <span style={{ opacity: 0.8, marginLeft: "12px" }}>
-                — clears in {Math.floor(countdown / 60)}:{String(countdown % 60).padStart(2, "0")}
+                — clears in {Math.floor(secs / 60)}:{String(secs % 60).padStart(2, "0")}
               </span>
-            )}
-          </>
-        ) : "No active breaking banner."}
+            </div>
+          );
+        }) : "No active breaking banner."}
       </div>
 
       <div className="gm-section-title">All Articles ({articles.length})</div>
