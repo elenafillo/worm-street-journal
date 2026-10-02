@@ -60,11 +60,10 @@ export function HowWexWorks({ open, onClose, driftEnabled = false }) {
         <button className="wex-how-close" onClick={onClose} aria-label="Close">×</button>
       </div>
 
-      <div className="wex-how-section">Trading</div>
-      <HowToTrade />
-
+      {/* No trading section: how to trade lives on #trade, under the listings,
+          where the Buy button is. */}
       <div className="wex-how-section">The market</div>
-      <ol className="wex-how-list" start={TRADE_RULES.length + 1}>
+      <ol className="wex-how-list">
         {marketRules.map((r) => (
           <li key={r.title}>
             <strong>{r.title}.</strong> {r.body}

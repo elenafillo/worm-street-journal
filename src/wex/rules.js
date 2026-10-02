@@ -34,54 +34,46 @@
 export const TRADE_RULES = [
   {
     title: "Your three words are your account",
-    body: "Anyone holding them is you. Don't read them out across a loud room.",
+    body: "",
   },
   {
     title: "Your net worth is cash plus shares",
-    body: "The big number at the top is whatever WORMCOIN you are holding, plus what your shares are worth right now. It moves when prices move, even while you sit perfectly still.",
+    body: "The big number at the top is whatever WORMCOIN you are holding, plus what your shares are worth right now.",
   },
   {
     title: "Tap a company to trade it",
-    body: "The row opens up. Set how many shares with the − and + buttons, or type a number straight in, then hit Buy or Sell.",
+    body: "Set how many shares with the − and + buttons, or type a number straight in, then hit Buy or Sell.",
   },
   {
-    title: "The screen does the sums for you",
+    title: "Max buy",
     body: "Max buy fills in the most you can currently afford. All held fills in everything you own of that company, and each row shows what you are holding. Before you commit, the panel tells you roughly what the order will cost and where it will leave the price.",
   },
   {
-    title: "You are the market",
-    body: "There is nobody on the other side of your trade. Buying pushes the price up; selling pushes it down. Everyone watching the wall sees it happen.",
+    title: "Worms are the market",
+    body: "Buying pushes the price up; selling pushes it down. But the market is also subject to big events and the whims of the media...",
   },
 ];
 
 /** The rest of it, for anyone standing in front of the wall. */
 export const MARKET_RULES = [
   {
+    title: "The market moves",
+    body: "Companies change price from bought and sold stocks, from random drifts, and from market events. Trade through the TRADE tab.",
+  },
+  {
     // Moved off the trade screen, which needed to be about which buttons to
     // press — but kept here, because a guest who buys and sells straight back,
     // ends up down, and is never told why concludes they were cheated.
-    title: "You pay the middle, and a round trip costs you",
-    body: "An order fills at the average of the price before and after it, so splitting a big buy into ten small ones costs exactly the same. It also means buying and selling straight back leaves you slightly down. That gap is the exchange taking its cut in mulch.",
-  },
-  {
-    title: "Thin companies move further",
-    body: "Every company has a depth. The same order shifts a shallow one much further than a deep one, so the small caps are where the drama is.",
-  },
-  {
-    title: "No single trade can break the market",
-    body: "One order may only move a company so far. To crash something properly you need friends, or the Worm Fed.",
+    title: "Buying and selling costs you",
+    body: "The exchange taking its cut in mulch.",
   },
   {
     title: "The Worm Fed intervenes",
     body: "It can spike a company, crash the whole economy, halt trading, or simply mark the timeline when something happens in the room. Those are the numbered lines on the chart.",
   },
   {
-    title: "Two leaderboards, on purpose",
-    body: "Richest worms is the satire. Best return is the game — it is measured against the fortune you were handed at the door, so the poorest worm in the room can still win.",
-  },
-  {
-    title: "The fortunes were never fair",
-    body: "Starting money was drawn from the same shape real wealth follows: a couple of obscene piles, a middle, and a long poor tail. That is the joke. Sorry.",
+    title: "Two leaderboards",
+    body: "Richest worm, versus highest return. Some people had a head-start...",
   },
   {
     title: "You cannot sell what you do not own",
@@ -99,17 +91,14 @@ export const MARKET_RULES = [
  */
 export const DRIFT_RULE = {
   title: "The market moves on its own",
-  body: "Prices drift every few minutes whether or not anyone trades, by an amount nobody chooses. Your holdings gain and lose while you stand at the bar. Halted companies sit it out, and nothing drifts once the bell has closed the exchange.",
+  body: "Prices drift every few minutes. Nothing drifts once the bell has closed the exchange.",
 };
 
 /** Reading the chart — only shown on the wall, where the chart is. */
 export const CHART_NOTES = [
   ["Each line is a company",
-   "Its colour is fixed, so it stays the same line all night. Tap one in the list below to have it to itself."],
-  ["The steps are real",
-   "Prices only change when someone trades, so the line steps rather than curves. Nothing is smoothed."],
+   "Tap one in the list below to display it or remove it."],
   ["Numbered rules are events",
-   "Whatever the Worm Fed did, listed underneath with the time it happened."],
-  ["Shaded bands are dead air",
-   "Quiet stretches are squeezed so the busy parts get the room. The band says how much time it swallowed."],
+   "from press and the markets, listed underneath with the time it happened."],
+  ["Shaded bands areQuiet stretches"],
 ];
