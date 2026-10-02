@@ -43,7 +43,7 @@ async function del(path) {
   if (!res.ok) throw new Error(`DELETE ${path} failed`);
 }
 
-/** Stories waiting for the Fed (see HELD_STORIES_brief.md), oldest first, each
+/** Stories waiting for the Fed (see docs/archive/HELD_STORIES_brief.md), oldest first, each
  *  with the trading name of whoever filed it. Never fails the overview: a
  *  database without supabase/held.sql just has no held stories. */
 async function heldStories() {

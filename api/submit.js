@@ -1,6 +1,6 @@
 import { SUPABASE_URL, serviceHeaders, jsonBody, rest, normaliseCode } from "./_supabase.js";
 
-// Filing a story. See HELD_STORIES_brief.md.
+// Filing a story. See docs/archive/HELD_STORIES_brief.md.
 //
 // Every story needs the WEX code of a claimed player (`code`). That is the
 // gate against strangers who find the link — it replaced the old shared

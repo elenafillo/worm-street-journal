@@ -768,7 +768,7 @@ grant select, insert, update, delete on articles, events to service_role;
 -- ============================================================================
 -- 8. Held stories, CEO press releases, and who filed what
 -- ============================================================================
--- See HELD_STORIES_brief.md; the migration was supabase/held.sql. Here, after
+-- See docs/archive/HELD_STORIES_brief.md; the migration was supabase/held.sql. Here, after
 -- section 7, because these reference `articles`.
 --
 --   articles.held            a story waiting for the GM. Always stored with

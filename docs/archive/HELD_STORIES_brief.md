@@ -1,3 +1,7 @@
+> **Archived 2026-10-02.** Built and shipped. The test checklist moved to
+> [docs/testing.md](../testing.md); the design is summarised in
+> [docs/data-and-security.md](../data-and-security.md) and [docs/gm-guide.md](../gm-guide.md).
+
 # Brief: held stories and CEO press releases
 
 Status: **in progress.** Written 2026-09-29.

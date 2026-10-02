@@ -2,7 +2,7 @@
 -- WEX — held stories, CEO press releases, and who filed what
 -- ============================================================================
 -- Paste this whole file into the Supabase SQL Editor and run it.
--- Idempotent: safe to re-run while iterating. See HELD_STORIES_brief.md.
+-- Idempotent: safe to re-run while iterating. See docs/archive/HELD_STORIES_brief.md.
 --
 -- WHAT THIS ADDS
 --   * articles.held — a story waiting for the GM. Always stored with

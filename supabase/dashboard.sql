@@ -47,7 +47,7 @@ alter table companies add column if not exists color text;
 -- both paper surfaces the app uses (#ffffff modern, #f2e8d5 classic) for
 -- lightness, chroma, colour-vision separation and contrast. Three of them sit
 -- below 3:1 on white — which is legal ONLY because every line carries a visible
--- ticker label and every swatch sits beside its ticker. See WEX_plan.md §8.5.
+-- ticker label and every swatch sits beside its ticker. See docs/archive/WEX_plan.md §8.5.
 with palette (i, hex) as (
   values (0, '#2a78d6'),   -- blue
          (1, '#eb6834'),   -- orange

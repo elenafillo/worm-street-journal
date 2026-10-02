@@ -22,7 +22,7 @@
 // at the dry run means rewriting one sentence, in one file.
 //
 // No numbers in this copy on purpose. Every dial worth quoting lives in the
-// database and can be changed at the party (see WEX_plan.md §6), so a rule that
+// database and can be changed at the party (see docs/archive/WEX_plan.md §6), so a rule that
 // said "one trade can move a stock 25%" would be a lie by 10pm.
 
 /**

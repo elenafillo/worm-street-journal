@@ -1,3 +1,7 @@
+> **Archived 2026-10-02.** The build plan and status log for WEX, frozen as it was.
+> Statuses, line links and some claims here are out of date. For how things work
+> now, start at [docs/](../).
+
 # WEX — The Worm Stock Exchange
 
 > Working plan **and** status log. Updated as the build progresses.
