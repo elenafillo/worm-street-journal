@@ -12,6 +12,8 @@ import { wexStyles } from "./wex/wexStyles.js";
 import { dashStyles } from "./wex/dashStyles.js";
 import TickerDash from "./wex/TickerDash.jsx";
 import { tickerStyles } from "./wex/tickerStyles.js";
+import PhotoCropper, { cropperStyles } from "./PhotoCropper.jsx";
+import { clampRatio, needsCrop, readPhoto, renderPhoto } from "./lib/photo.js";
 
 // ============================================================
 // Styles
@@ -1431,8 +1433,14 @@ function BroadsheetScreen() {
 function SubmitForm() {
   const [isNoticeMode, setIsNoticeMode] = useState(false);
   const [form, setForm] = useState({ author_name: "", headline: "", body: "" });
+  // `photo` is what they picked, decoded; `imageFile` is what gets uploaded —
+  // cropped and shrunk (lib/photo.js). Kept apart so "Adjust crop" can go
+  // back to the full original.
+  const [photo, setPhoto] = useState(null);         // { file, bitmap, width, height, url }
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
+  const [cropping, setCropping] = useState(false);
+  const [processing, setProcessing] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [selectedDay, setSelectedDay] = useState(null); // index 0–3
   const [selectedTime, setSelectedTime] = useState("");
@@ -1483,8 +1491,7 @@ function SubmitForm() {
     setIsNoticeMode(noticeMode);
     setSelectedDay(null);
     setSelectedTime("");
-    setImageFile(null);
-    setImagePreview(null);
+    clearPhoto();
     setError("");
     setForm(f => ({
       ...f,
@@ -1497,12 +1504,68 @@ function SubmitForm() {
     setForm(f => ({ ...f, [e.target.name]: e.target.value }));
   }
 
-  function handleImageFile(file) {
-    if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { setError("Image must be under 5MB."); return; }
+  function setUpload(file) {
+    if (imagePreview) URL.revokeObjectURL(imagePreview);
+    setImagePreview(file ? URL.createObjectURL(file) : null);
     setImageFile(file);
-    setImagePreview(URL.createObjectURL(file));
+  }
+
+  function clearPhoto() {
+    if (photo) { URL.revokeObjectURL(photo.url); photo.bitmap.close?.(); }
+    setPhoto(null);
+    setUpload(null);
+    setCropping(false);
+  }
+
+  async function applyCrop(source, rect) {
+    setCropping(false);
+    setProcessing(true);
+    try {
+      setUpload(await renderPhoto(source.bitmap, rect, source.file.name));
+    } catch (err) {
+      console.error(err);
+      setError("That photo couldn't be processed. Try another one.");
+      clearPhoto();
+    }
+    setProcessing(false);
+  }
+
+  // Inside 4:5–5:4 it is just shrunk; outside, the crop box opens and the
+  // upload is made when they tap "Use photo".
+  async function handleImageFile(file) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { setError("That file isn't an image."); return; }
+    if (file.size > 25 * 1024 * 1024) { setError("Image must be under 25MB."); return; }
     setError("");
+    clearPhoto();
+    // A GIF would lose its animation on a canvas, so it goes up as it is and
+    // the square slots' bands take care of its shape.
+    if (file.type === "image/gif") {
+      if (file.size > 5 * 1024 * 1024) { setError("GIFs must be under 5MB."); return; }
+      setUpload(file);
+      return;
+    }
+    setProcessing(true);
+    let source;
+    try {
+      const { bitmap, width, height } = await readPhoto(file);
+      source = { file, bitmap, width, height, url: URL.createObjectURL(file) };
+    } catch {
+      setProcessing(false);
+      setError("That photo couldn't be read. Try a JPEG or PNG.");
+      return;
+    }
+    setPhoto(source);
+    setProcessing(false);
+    if (needsCrop(source.width, source.height)) setCropping(true);
+    else await applyCrop(source, null);
+  }
+
+  function cancelCrop() {
+    // Backing out of the first crop means no photo; backing out of an
+    // adjustment keeps the one they already had.
+    if (imageFile) setCropping(false);
+    else clearPhoto();
   }
 
   function handleDrop(e) {
@@ -1581,8 +1644,7 @@ function SubmitForm() {
           : "✓ Your dispatch has been filed. It will appear on the wall momentarily."
         );
         setForm(f => ({ ...f, headline: "", body: "" }));
-        setImageFile(null);
-        setImagePreview(null);
+        clearPhoto();
         setSelectedDay(null);
         setSelectedTime("");
         setHeld(false);
@@ -1692,21 +1754,34 @@ function SubmitForm() {
 
       {!isNoticeMode && (
         <div className="form-group">
-          <label className="form-label">Image (Optional · Max 5MB)</label>
+          <label className="form-label">Image (Optional)</label>
           <div
             className={`image-upload-area ${dragOver ? "drag-over" : ""}`}
             onDragOver={e => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
             onDrop={handleDrop}
-            onClick={() => fileRef.current?.click()}
+            onClick={() => { if (!processing) fileRef.current?.click(); }}
           >
-            {imagePreview ? (
+            {processing ? (
+              <label className="image-upload-label"><span className="spinner" />Preparing your photograph…</label>
+            ) : imagePreview ? (
               <>
                 <img className="image-preview" src={imagePreview} alt="Preview" />
                 <br />
+                {photo && (
+                  <button
+                    type="button"
+                    className="image-remove"
+                    style={{ marginRight: "16px" }}
+                    onClick={e => { e.stopPropagation(); setCropping(true); }}
+                  >
+                    Adjust crop
+                  </button>
+                )}
                 <button
+                  type="button"
                   className="image-remove"
-                  onClick={e => { e.stopPropagation(); setImageFile(null); setImagePreview(null); }}
+                  onClick={e => { e.stopPropagation(); clearPhoto(); }}
                 >
                   Remove image
                 </button>
@@ -1721,9 +1796,17 @@ function SubmitForm() {
               type="file"
               accept="image/*"
               style={{ display: "none" }}
-              onChange={e => handleImageFile(e.target.files[0])}
+              onChange={e => { handleImageFile(e.target.files[0]); e.target.value = ""; }}
             />
           </div>
+          {cropping && photo && (
+            <PhotoCropper
+              src={photo.url}
+              initialAspect={clampRatio(photo.width / photo.height)}
+              onCancel={cancelCrop}
+              onDone={rect => applyCrop(photo, rect)}
+            />
+          )}
         </div>
       )}
 
@@ -1762,7 +1845,7 @@ function SubmitForm() {
 
       {error && <div className="error-msg">{error}</div>}
 
-      <button className="submit-btn" onClick={handleSubmit} disabled={submitting || !who}>
+      <button className="submit-btn" onClick={handleSubmit} disabled={submitting || !who || processing || cropping}>
         {submitting
           ? <><span className="spinner" />Filing...</>
           : who === undefined ? "Checking your papers…"
@@ -2027,7 +2110,7 @@ export default function App() {
 
   return (
     <div data-style={DISPLAY_STYLE}>
-      <style>{styles}{wexStyles}{dashStyles}{tickerStyles}</style>
+      <style>{styles}{wexStyles}{dashStyles}{tickerStyles}{cropperStyles}</style>
       {/* Five short labels, still one phone line without wrapping — roughly
           290px of text and gaps inside a 320px viewport. The old standalone
           "WSJ" brand is gone; it is now the broadsheet link itself.
