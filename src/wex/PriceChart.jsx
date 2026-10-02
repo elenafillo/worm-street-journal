@@ -2,9 +2,10 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { formatWormcoin, formatPct, timeLabel } from "./format.js";
 import { colorOf } from "./palette.js";
 import { eventMoves } from "./tickerFeed.js";
+import { bellKind, bellsFrom, closedSpans } from "./bell.js";
 import {
   stepPath, buildSeries, niceTicks, yDomain, spreadLabels, buildTimeScale, downsample,
-  windowStart,
+  windowStart, chartEnd, latestActivity,
 } from "./chartSeries.js";
 
 /** "8h", "45m" — how much time a compressed gap swallowed. */
@@ -38,6 +39,7 @@ export default function PriceChart({
   hidden = {},       // { [companyId]: true }
   onToggleSeries,
   height = 380,
+  market = {},       // market_state: where the bell says the chart ends
 }) {
   const wrapRef = useRef(null);
   const [width, setWidth] = useState(0);
@@ -74,9 +76,11 @@ export default function PriceChart({
   const model = useMemo(() => {
     if (!width || !companies.length) return null;
 
-    const earliest = ticks.length ? ticks[0].t : now - 60_000;
-    const t0 = windowStart({ windowMs, startAt, earliest, now });
-    const t1 = now;
+    // Stops at the closing bell while the exchange is shut, so every window
+    // below is measured back from the close rather than from an empty room.
+    const t1 = chartEnd({ market, now, latest: latestActivity(ticks, events) });
+    const earliest = ticks.length ? ticks[0].t : t1 - 60_000;
+    const t0 = windowStart({ windowMs, startAt, earliest, now: t1 });
 
     const series = buildSeries({ companies: visible, ticks, t0, t1, yMode });
 
@@ -121,14 +125,29 @@ export default function PriceChart({
       };
     });
 
+    // The bell, from its markers (bell.js). A gap inside a closed stretch is
+    // the exchange being shut, and says so; any other gap is just a lull.
+    const bells = bellsFrom(events, market);
+    const shut = closedSpans(bells, t1);
+
     // Drawn as visible bands with the elided duration on them. Squeezing time
     // without saying so would make the axis a lie.
-    const gapBands = scale.gaps.map((g) => ({
-      key: g.a,
-      x: PAD.left + (g.ca / scale.total) * plotW,
-      w: Math.max(2, ((g.cb - g.ca) / scale.total) * plotW),
-      label: humanGap(g.b - g.a),
-    }));
+    const gapBands = scale.gaps.map((g) => {
+      const mid = (g.a + g.b) / 2;
+      const closed = shut.some((s) => mid >= s.a && mid <= s.b);
+      return {
+        key: g.a,
+        x: PAD.left + (g.ca / scale.total) * plotW,
+        w: Math.max(2, ((g.cb - g.ca) / scale.total) * plotW),
+        label: `${closed ? "closed " : ""}${humanGap(g.b - g.a)}`,
+      };
+    });
+
+    // A rule at each ring, labelled on the side the session is: an open reads
+    // rightwards into the trading it began, a close leftwards back over it.
+    const bellMarks = bells
+      .filter((b) => b.t >= t0 && b.t <= t1)
+      .map((b) => ({ ...b, x: xOf(b.t) }));
 
     const labels = spreadLabels(
       drawn.map((s) => ({ s, y: yOf(s.lastValue) })),
@@ -137,17 +156,18 @@ export default function PriceChart({
 
     // Markers inside the window, numbered in the order they happened so the
     // caption list under the chart reads left to right.
+    // Bells are drawn as bells, above, not as numbered markers.
     const marks = events
-      .filter((e) => e.t >= t0 && e.t <= t1)
+      .filter((e) => e.t >= t0 && e.t <= t1 && !bellKind(e))
       .sort((a, b) => a.t - b.t)
       .slice(-6)
       .map((e, i) => ({ ...e, n: i + 1, x: xOf(e.t) }));
 
     return {
       t0, t1, span: t1 - t0,
-      lo, hi, plotW, plotH, xOf, yOf, scale, drawn, labels, marks, gapBands,
+      lo, hi, plotW, plotH, xOf, yOf, scale, drawn, labels, marks, gapBands, bellMarks,
     };
-  }, [width, height, now, companies, visible, ticks, events, windowMs, startAt, yMode]);
+  }, [width, height, now, companies, visible, ticks, events, windowMs, startAt, yMode, market]);
 
   // ---- Hover: crosshair + tooltip -----------------------------------------
   // A projector has no pointer, but the same URL gets opened on a laptop, and
@@ -245,6 +265,27 @@ export default function PriceChart({
               </text>
             </g>
           ))}
+
+          {/* The bell. Inside the plot, below the event dots, so a bell and a
+              headline in the same minute do not overprint. */}
+          {model.bellMarks.map((b) => {
+            const close = b.kind === "close";
+            return (
+              <g key={`${b.kind}:${b.t}`}>
+                <line
+                  className={`wexd-bell-rule ${b.kind}`}
+                  x1={b.x} x2={b.x} y1={PAD.top} y2={PAD.top + model.plotH}
+                />
+                <text
+                  className={`wexd-bell-label ${b.kind}`}
+                  x={b.x + (close ? -5 : 5)} y={PAD.top + 26}
+                  textAnchor={close ? "end" : "start"}
+                >
+                  {close ? "Closed" : "Opened"} {timeLabel(b.t, model.span)}
+                </text>
+              </g>
+            );
+          })}
 
           {/* The lines. 3px, not 2 — a thin line on a white sheet loses to
               projector bloom and to whatever the room does to it. */}

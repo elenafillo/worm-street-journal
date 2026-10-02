@@ -68,6 +68,43 @@ export function windowStart({ windowMs, startAt, earliest, now }) {
 }
 
 /**
+ * The right edge of a chart: now, unless the bell has closed the exchange.
+ *
+ * A closed market drew its lines on to the right as flat lines, as if trading
+ * were still going on, and a market shut for longer than the window drew
+ * nothing but those lines. So once it closes the chart stops at the close, and
+ * "the last hour" means the last hour of trading.
+ *
+ * Not exactly at the close, though: the Fed can still fire an event or set a
+ * price on a shut exchange, and a move with nowhere to be drawn would turn up as
+ * an unexplained jump. `latest` is the newest tick or event held; the edge runs
+ * on to it when it came after the close.
+ *
+ * A market that was never opened, or has been reset, has no `closed_at` and
+ * keeps the moving edge.
+ */
+export function chartEnd({ market, now, latest = -Infinity }) {
+  if (!market || market.is_open || !market.closed_at) return now;
+  const closed = new Date(market.closed_at).getTime();
+  if (!Number.isFinite(closed) || closed > now) return now;
+  return Math.min(now, Math.max(closed, latest));
+}
+
+/** The newest moment in a tick list (oldest first, as every hook keeps it) and
+ *  an event list, for chartEnd's `latest`. */
+export function latestActivity(ticks = [], events = []) {
+  let t = ticks.length ? ticks[ticks.length - 1].t : -Infinity;
+  for (const e of events) if (e.t > t) t = e.t;
+  return t;
+}
+
+/** Whether a chart drawn to `end` is showing a shut exchange — what the charts
+ *  key their "closed" look on. Same test as chartEnd's. */
+export function isClosed(market) {
+  return Boolean(market && !market.is_open && market.closed_at);
+}
+
+/**
  * Prices change discretely, at trades. A step-after path is the honest shape;
  * a smoothed spline would invent movement that never happened.
  *

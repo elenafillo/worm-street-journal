@@ -7,6 +7,7 @@ import { buildFeed, pickSlots, nextSlots, repairSlots } from "./tickerFeed.js";
 import { formatWormcoin, pctChange, hms } from "./format.js";
 import { Move, FeedRow } from "./TickerRows.jsx";
 import { hashParams, numberParam } from "./hashParams.js";
+import { chartEnd, latestActivity, isClosed } from "./chartSeries.js";
 
 // ============================================================
 // #ticker — the exchange as an 80s trading terminal
@@ -109,6 +110,11 @@ function TickerFixed() {
   const status = !loaded ? "wait" : market.is_open ? "open" : "closed";
   const statusText = { wait: "CONNECTING", open: "MARKET OPEN", closed: "MARKET CLOSED" }[status];
 
+  // While the exchange is shut the chart shows the last `hours` of trading,
+  // not the last `hours` of an empty room. The header clock keeps `now`.
+  const end = chartEnd({ market, now, latest: latestActivity(ticks, events) });
+  const closedAt = isClosed(market) ? new Date(market.closed_at).getTime() : null;
+
   return (
     <div className="tkr">
       <header className="tkr-head">
@@ -158,16 +164,17 @@ function TickerFixed() {
 
         <section className="tkr-panel tkr-right">
           <div className="tkr-label">
-            &gt; LAST {hours}H · {yMode === "abs" ? "SHARE PRICE ⌀" : "% VS OPEN"}
+            &gt; {closedAt ? `LAST ${hours}H OF TRADING` : `LAST ${hours}H`} · {yMode === "abs" ? "SHARE PRICE ⌀" : "% VS OPEN"}
           </div>
           <PixelChart
             companies={chartCompanies}
             colors={chartColors}
             ticks={ticks}
-            t0={now - hours * 3_600_000}
-            t1={now}
+            t0={end - hours * 3_600_000}
+            t1={end}
             scale={scale}
             yMode={yMode}
+            closedAt={closedAt}
           />
         </section>
       </main>

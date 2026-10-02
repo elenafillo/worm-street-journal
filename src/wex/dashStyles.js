@@ -131,6 +131,18 @@ export const dashStyles = `
   .wexd-event-num { fill: var(--paper); font-size: 10px; font-weight: 700; font-family: inherit; }
   .wexd-crosshair { stroke: var(--ink); stroke-width: 1; opacity: 0.35; }
 
+  /* The bell, in the masthead stamp's colours: the same green and red that say
+     Open and Closed at the top of the page. */
+  .wexd-bell-rule { stroke-width: 2; opacity: 0.7; }
+  .wexd-bell-rule.open { stroke: var(--wex-up); }
+  .wexd-bell-rule.close { stroke: var(--red); }
+  .wexd-bell-label {
+    font-size: 10px; font-weight: 700; font-family: inherit;
+    text-transform: uppercase; letter-spacing: 1px;
+  }
+  .wexd-bell-label.open { fill: var(--wex-up); }
+  .wexd-bell-label.close { fill: var(--red); }
+
   .wexd-tooltip {
     position: absolute; pointer-events: none;
     background: var(--paper); border: 1px solid var(--rule);

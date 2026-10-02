@@ -76,7 +76,8 @@ function domainFor(series, yMode) {
 
 /** One frame of the chart, into a buffer already sized to `box`. */
 function draw(ctx, inputs, { box, now, blink }) {
-  const { series, time, colors, t0, t1, yMode, axes, legend, reveals, revealMs } = inputs;
+  const { series, time, colors, t0, t1, yMode, axes, legend, reveals, revealMs, closedAt } = inputs;
+  const closed = closedAt != null;
   const abs = yMode === "abs";
   const W = box.w;
   const H = box.h;
@@ -172,6 +173,9 @@ function draw(ctx, inputs, { box, now, blink }) {
     ctx.beginPath();
     ctx.rect(0, 0, clipX + 1, H);
     ctx.clip();
+    // A shut exchange is drawn at half strength: the history is still there
+    // to read, but nothing about it should look live.
+    if (closed) ctx.globalAlpha = 0.45;
     ctx.fillStyle = color;
     let px = xOf(pts[0].t);
     let py = yOf(pts[0].v);
@@ -195,12 +199,15 @@ function draw(ctx, inputs, { box, now, blink }) {
   });
 
   // ---- the live end: a blinking cursor, and each line's ticker ----------
+  // No cursor once the bell has rung. A blinking pen is the one thing on the
+  // chart that says "this is happening now", and it is not.
   for (const e of ends) {
-    if (blink) {
+    if (blink && !closed) {
       ctx.fillStyle = e.color;
       ctx.fillRect(x1 - 1, e.y - 1, 3, 3);
     }
   }
+  if (closed) drawClosed();
   if (legend) drawLegend();
   if (!axes) return;
   const placed = spreadLabels(
@@ -210,6 +217,24 @@ function draw(ctx, inputs, { box, now, blink }) {
   for (const p of placed) {
     const s = series[p.key];
     drawText(ctx, s.company.ticker || "?", x1 + 4, p.y, colors[p.key] || LABEL);
+  }
+
+  function drawClosed() {
+    // Across the middle of the plot, on a black plate with a red rule, so it
+    // reads from the back of the room over whatever the lines are doing. The
+    // time goes first when the plot is too narrow for both.
+    const full = `CLOSED ${hh(closedAt)}`;
+    const msg = textWidth(full) + 8 <= plotW ? full : "CLOSED";
+    const w = textWidth(msg);
+    if (w + 6 > plotW || GLYPH_H + 6 > plotH) return; // the dimmed lines will have to say it
+    const bx = Math.round(x0 + (plotW - w) / 2) - 3;
+    const by = Math.round(top + (plotH - GLYPH_H) / 2) - 3;
+    ctx.fillStyle = BG;
+    ctx.fillRect(bx, by, w + 6, GLYPH_H + 6);
+    ctx.fillStyle = DOWN;
+    ctx.fillRect(bx, by, w + 6, 1);
+    ctx.fillRect(bx, by + GLYPH_H + 5, w + 6, 1);
+    drawText(ctx, msg, bx + 3, by + 3, DOWN);
   }
 
   function drawLegend() {
@@ -260,10 +285,12 @@ function draw(ctx, inputs, { box, now, blink }) {
  * @param axes       gridlines, y labels, hour marks, end labels
  * @param legend     the swatch + ticker + price row along the top
  * @param revealMs   how long a new line takes to draw itself in
+ * @param closedAt   when the bell closed the exchange, ms; null while it is
+ *                   open. Dims the lines, stops the cursor, says CLOSED.
  */
 export default function PixelChart({
   companies, colors, ticks, t0, t1, scale = null, yMode = "pct",
-  axes = true, legend = true, revealMs = REVEAL_MS,
+  axes = true, legend = true, revealMs = REVEAL_MS, closedAt = null,
 }) {
   const series = useMemo(
     () => buildSeries({ companies, ticks, t0, t1, yMode }),
@@ -286,8 +313,8 @@ export default function PixelChart({
   }, [companies]);
 
   const inputs = useMemo(
-    () => ({ series, time, colors, t0, t1, yMode, axes, legend, reveals, revealMs }),
-    [series, time, colors, t0, t1, yMode, axes, legend, revealMs]
+    () => ({ series, time, colors, t0, t1, yMode, axes, legend, reveals, revealMs, closedAt }),
+    [series, time, colors, t0, t1, yMode, axes, legend, revealMs, closedAt]
   );
   const animating = useCallback(
     (now) => [...reveals.current.values()].some((s) => now - s < revealMs),

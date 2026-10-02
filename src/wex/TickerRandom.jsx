@@ -8,6 +8,7 @@ import { buildFeed } from "./tickerFeed.js";
 import { initialState, step, makeRng, revealMs, KINDS } from "./popScheduler.js";
 import { hashParams, numberParam } from "./hashParams.js";
 import { hms } from "./format.js";
+import { chartEnd, latestActivity, isClosed } from "./chartSeries.js";
 
 // ============================================================
 // #ticker?mode=random — the exchange as a busy 1985 desktop
@@ -38,7 +39,7 @@ const TRIO_COLORS = ["#00e5ff", "#ff3df2", "#ffe600", "#b18cff"];
 
 const hoursLabel = (h) => (h < 1 ? `${Math.round(h * 60)}M` : `${h}H`);
 
-function ChartBody({ ids, byId, colors, ticks, now, hours, scale, yMode, speed }) {
+function ChartBody({ ids, byId, colors, ticks, now, hours, scale, yMode, speed, closedAt }) {
   const cos = useMemo(() => ids.map((id) => byId.get(id)).filter(Boolean), [ids, byId]);
   return (
     <PixelChart
@@ -50,22 +51,24 @@ function ChartBody({ ids, byId, colors, ticks, now, hours, scale, yMode, speed }
       scale={scale}
       yMode={yMode}
       revealMs={revealMs(speed)}
+      closedAt={closedAt}
     />
   );
 }
 
-function WindowBody({ win, data, now, scale, yMode, speed }) {
+// `now` here is the charts' right edge — chartEnd's, so it stops at the close.
+function WindowBody({ win, data, now, scale, yMode, speed, closedAt }) {
   const { byId, companies, ticks, events, feed } = data;
   switch (win.kind) {
     case "line":
       return (
         <ChartBody ids={win.companyIds} byId={byId} colors={LINE_COLORS[win.id % 3]} ticks={ticks}
-          now={now} hours={win.hours} scale={scale} yMode={yMode} speed={speed} />
+          now={now} hours={win.hours} scale={scale} yMode={yMode} speed={speed} closedAt={closedAt} />
       );
     case "trio":
       return (
         <ChartBody ids={win.companyIds} byId={byId} colors={TRIO_COLORS} ticks={ticks}
-          now={now} hours={win.hours} scale={scale} yMode={yMode} speed={speed} />
+          now={now} hours={win.hours} scale={scale} yMode={yMode} speed={speed} closedAt={closedAt} />
       );
     case "sparks":
       return <PixelSparks companies={companies} ticks={ticks} t0={now - win.hours * 3_600_000} t1={now} scale={scale} />;
@@ -167,12 +170,17 @@ export default function TickerRandom() {
   const status = !loaded ? "wait" : market.is_open ? "open" : "closed";
   const statusText = { wait: "CONNECTING", open: "MARKET OPEN", closed: "MARKET CLOSED" }[status];
 
+  // The charts' right edge: the close while the exchange is shut (chartEnd).
+  // The status-bar clock keeps `now`.
+  const end = chartEnd({ market, now, latest: latestActivity(ticks, events) });
+  const closedAt = isClosed(market) ? new Date(market.closed_at).getTime() : null;
+
   return (
     <div className="tkr rnd">
       <div className="rnd-field" ref={fieldRef} style={{ "--rnd-grid": `${grid}px`, "--rnd-px": `${scale}px` }}>
         {sched.windows.map((w) => (
           <PopWindow key={w.id} win={w} meta={w.kind === "line" || w.kind === "sparks" ? hoursLabel(w.hours) : null}>
-            <WindowBody win={w} data={data} now={now} scale={scale} yMode={yMode} speed={speed} />
+            <WindowBody win={w} data={data} now={end} scale={scale} yMode={yMode} speed={speed} closedAt={closedAt} />
           </PopWindow>
         ))}
       </div>

@@ -9,6 +9,7 @@
 
 import { SUPABASE_URL, serviceHeaders, jsonBody, rest, rpc } from "./_supabase.js";
 import { ADJECTIVES, PLACES, WORMS } from "../src/wex/wordlists.js";
+import { OPENING_BELL, CLOSING_BELL } from "../src/wex/bell.js";
 
 const GM_PASSWORD = process.env.GM_PASSWORD;
 
@@ -155,21 +156,33 @@ export default async function handler(req, res) {
       // ------------------------------------------------------------------
       // Market
       // ------------------------------------------------------------------
-      case "open_market":
-        await patch("market_state?id=eq.1", {
+      // Each ring also leaves a marker on the timeline (src/wex/bell.js), which
+      // is how the charts tell a closed night from a quiet half hour. The
+      // `is_open` filter makes a second tap — two tabs, a double-tap — change
+      // nothing and so ring nothing.
+      case "open_market": {
+        const rows = await patch("market_state?id=eq.1&is_open=eq.false", {
           is_open: true, opened_at: new Date().toISOString(), updated_at: new Date().toISOString(),
           // Restart the drift clock at the bell. Without this, a market that
           // sat closed overnight would drift five intervals in its first second
           // open and put a cliff on the chart before anyone had traded.
           last_drift_at: new Date().toISOString(),
         });
+        if (Array.isArray(rows) && rows.length) {
+          await post("market_events", { company_id: null, headline: OPENING_BELL, pct_change: 0 });
+        }
         return res.status(200).json({ ok: true });
+      }
 
-      case "close_market":
-        await patch("market_state?id=eq.1", {
+      case "close_market": {
+        const rows = await patch("market_state?id=eq.1&is_open=eq.true", {
           is_open: false, closed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
         });
+        if (Array.isArray(rows) && rows.length) {
+          await post("market_events", { company_id: null, headline: CLOSING_BELL, pct_change: 0 });
+        }
         return res.status(200).json({ ok: true });
+      }
 
       case "halt": {
         const target = params.company_id

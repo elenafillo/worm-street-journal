@@ -4,7 +4,7 @@ import { usePrices, useTicks } from "./useMarketData.js";
 import { HowToTrade } from "./HowItWorks.jsx";
 import PortfolioChart from "./PortfolioChart.jsx";
 import { buildFortune } from "./portfolioSeries.js";
-import { CHART_WINDOWS, resolveWindow, windowStart } from "./chartSeries.js";
+import { CHART_WINDOWS, resolveWindow, windowStart, chartEnd, latestActivity } from "./chartSeries.js";
 import {
   formatWormcoin, formatPct, signedWormcoin, pctChange, previewTrade,
   maxAffordableShares, WORMCOIN,
@@ -298,7 +298,7 @@ function CompanyRow({ co, open, onToggle, marketOpen, cash, maxImpact, onTrade, 
 // their phone locks.
 //
 // Nothing is fetched at all while it is folded. useTicks does not run.
-function Fortune({ player, holdings, trades, companies, openedAt, open, onToggle }) {
+function Fortune({ player, holdings, trades, companies, market, open, onToggle }) {
   const [windowId, setWindowId] = useState("session");
   const { ticks, loaded } = useTicks(open, TICK_POLL_MS);
 
@@ -314,20 +314,22 @@ function Fortune({ player, holdings, trades, companies, openedAt, open, onToggle
     return () => clearInterval(id);
   }, [open]);
 
-  const { windowMs, startAt } = resolveWindow(windowId, openedAt);
+  const { windowMs, startAt } = resolveWindow(windowId, market.opened_at);
 
   const fortune = useMemo(() => {
     if (!open || !ticks.length) return null;
-    const t0 = windowStart({ windowMs, startAt, earliest: ticks[0].t, now });
+    // Same right edge as the wall: the close, while the exchange is shut.
+    const t1 = chartEnd({ market, now, latest: latestActivity(ticks) });
+    const t0 = windowStart({ windowMs, startAt, earliest: ticks[0].t, now: t1 });
     return buildFortune({
       trades, ticks, companies,
       cashNow: player.cash,
       holdingsNow: holdings,
       startingCash: player.starting_cash,
-      t0, t1: now,
+      t0, t1,
     });
   }, [open, ticks, trades, companies, holdings,
-      player.cash, player.starting_cash, windowMs, startAt, now]);
+      player.cash, player.starting_cash, windowMs, startAt, now, market]);
 
   const dir = (n) => (n > 0 ? "up" : n < 0 ? "down" : "");
 
@@ -653,7 +655,7 @@ export default function WexTrade() {
         holdings={data.holdings || []}
         trades={trades}
         companies={companies}
-        openedAt={market.opened_at}
+        market={market}
         open={fortuneOpen}
         onToggle={toggleFortune}
       />

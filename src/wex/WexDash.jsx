@@ -188,6 +188,7 @@ export default function WexDash() {
           hidden={effectiveHidden}
           onToggleSeries={toggle}
           height={360}
+          market={market}
         />
 
         {/* The legend, the table view and the series toggle in one. It is here
