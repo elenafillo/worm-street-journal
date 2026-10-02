@@ -148,11 +148,15 @@ const styles = `
   .article-inner.img-right { flex-direction: row-reverse; }
   .article-inner.no-img { flex-direction: column; }
 
+  /* Photo slots are square and show the whole photo: uploads are cropped to
+     between 4:5 and 5:4, and whatever is left over becomes paper-coloured
+     bands rather than being cut off. Same rule on every screen. */
   .article-image {
-    width: 220px;
-    min-width: 220px;
+    width: 160px;
+    min-width: 160px;
     height: 160px;
-    object-fit: cover;
+    object-fit: contain;
+    background: var(--paper-dark);
     border: 1px solid var(--paper-darker);
     flex-shrink: 0;
   }
@@ -799,10 +803,13 @@ const styles = `
     align-items: flex-start;
   }
 
+  /* Fixed sizes, because the page is a fixed 1200x960 canvas. 240 + 150 is
+     what leaves room for a three-line headline and all three stories below. */
   .broadsheet-hero-image {
-    width: 34%;
+    width: 240px;
     aspect-ratio: 1 / 1;
-    object-fit: cover;
+    object-fit: contain;
+    background: var(--paper-dark);
     border: 1px solid var(--paper-darker);
     flex-shrink: 0;
   }
@@ -841,9 +848,10 @@ const styles = `
   }
 
   .broadsheet-secondary-image {
-    width: 75%;
+    width: 150px;
     aspect-ratio: 1 / 1;
-    object-fit: cover;
+    object-fit: contain;
+    background: var(--paper-dark);
     border: 1px solid var(--paper-darker);
     margin-bottom: 8px;
     flex-shrink: 0;
@@ -1057,9 +1065,11 @@ const styles = `
 
     .broadsheet-hero-layout { flex-direction: column; }
 
+    /* A touch wider than square, so the photo isn't a whole screen tall;
+       square and portrait photos get bands at the sides. */
     .broadsheet-hero-image {
       width: 100%;
-      aspect-ratio: 16 / 9;
+      aspect-ratio: 5 / 4;
     }
 
     .broadsheet-hero-body { font-size: 15px; }
