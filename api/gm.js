@@ -1,23 +1,14 @@
-import dotenv from "dotenv";
-dotenv.config({ path: ".env.local" });
+import { SUPABASE_URL, serviceHeaders, jsonBody, rest } from "./_supabase.js";
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const GM_PASSWORD = process.env.GM_PASSWORD;
-
-function serviceHeaders() {
-  return {
-    apikey: SUPABASE_SERVICE_ROLE_KEY,
-    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-    "Content-Type": "application/json",
-    Prefer: "return=representation",
-  };
-}
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
-  const { password, action, ...params } = req.body;
+  const body = jsonBody(req);
+  if (!body) return res.status(400).json({ error: "Malformed request." });
+
+  const { password, action, ...params } = body;
 
   if (!password || password !== GM_PASSWORD) {
     return res.status(403).json({ error: "Wrong password, worm." });
@@ -26,18 +17,32 @@ export default async function handler(req, res) {
   try {
     switch (action) {
       case "fetch_articles": {
-        const r = await fetch(
-          `${SUPABASE_URL}/rest/v1/articles?select=*&order=created_at.desc`,
-          { headers: serviceHeaders() }
-        );
-        return res.status(200).json(await r.json());
+        // Each article gains two GM-only fields: `filed_by`, the trading name
+        // of whoever filed it (article_filers — anon can never read that
+        // table), and `press_ticker` for a press release. Merged here rather
+        // than embedded, so the newsroom still loads if either lookup fails.
+        const [articles, filers, companies] = await Promise.all([
+          rest("articles", "select=*&order=created_at.desc"),
+          rest("article_filers", "select=article_id,trading_name").catch(() => []),
+          rest("companies", "select=id,ticker").catch(() => []),
+        ]);
+        const filedBy = new Map(filers.map((f) => [f.article_id, f.trading_name]));
+        const tickerOf = new Map(companies.map((c) => [c.id, c.ticker]));
+        return res.status(200).json(articles.map((a) => ({
+          ...a,
+          filed_by: filedBy.get(a.id) || null,
+          press_ticker: a.press_company_id ? tickerOf.get(a.press_company_id) || "?" : null,
+        })));
       }
 
       case "hide": {
+        // Showing a held story publishes it without a market move, so it is
+        // no longer waiting for approval either. Hiding leaves `held` alone.
+        const fields = params.hidden ? { hidden: true } : { hidden: false, held: false };
         await fetch(`${SUPABASE_URL}/rest/v1/articles?id=eq.${params.id}`, {
           method: "PATCH",
           headers: serviceHeaders(),
-          body: JSON.stringify({ hidden: params.hidden }),
+          body: JSON.stringify(fields),
         });
         return res.status(200).json({ ok: true });
       }

@@ -1,0 +1,78 @@
+// ============================================================
+// Shared server-side Supabase access
+// ============================================================
+// The leading underscore keeps Vercel from routing this as an endpoint.
+//
+// SUPABASE_SERVICE_ROLE_KEY bypasses RLS entirely. It exists only here, on the
+// server. It must never be imported into anything under src/ — that would ship
+// it in the browser bundle and hand every guest write access to the database.
+
+import dotenv from "dotenv";
+dotenv.config({ path: ".env.local" });
+
+export const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+/**
+ * Safely read a JSON request body.
+ *
+ * `req.body` is a lazy getter on Vercel: it parses on first access and THROWS
+ * on malformed input. Destructuring it directly (`const { x } = req.body`)
+ * therefore throws out of the handler — which returns a 500 in production and
+ * takes the whole `vercel dev` process down locally.
+ *
+ * Returns null when the body is unparseable, so callers can answer 400.
+ */
+export function jsonBody(req) {
+  try {
+    return req.body ?? {};
+  } catch {
+    return null;
+  }
+}
+
+/** A typed player code, reduced to what players.code_norm stores in Postgres:
+ *  lowercase letters and digits only. Shared by /api/wex and /api/submit so
+ *  the two can never disagree about whether a code matches. */
+export function normaliseCode(code) {
+  return String(code || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+export function serviceHeaders() {
+  return {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    "Content-Type": "application/json",
+    Prefer: "return=representation",
+  };
+}
+
+// PostgREST helper: GET a table with a raw query string, e.g.
+//   rest("players", "select=*&code_norm=eq.damptunnelworm")
+export async function rest(path, query = "") {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/${path}${query ? `?${query}` : ""}`,
+    { headers: serviceHeaders() }
+  );
+  const data = await res.json();
+  // Throw rather than return the error object. Callers guard with
+  // `Array.isArray(x) ? x : []`, which would quietly turn a permissions or
+  // schema failure into "no rows" — a bug that reads as an empty database.
+  if (!res.ok) {
+    throw new Error(
+      `PostgREST ${path} → ${res.status}: ${data?.message || JSON.stringify(data)}`
+    );
+  }
+  return data;
+}
+
+// Call a Postgres function (RPC). Used for execute_trade, where the whole
+// read-check-write must happen inside one transaction.
+export async function rpc(fn, args) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    method: "POST",
+    headers: serviceHeaders(),
+    body: JSON.stringify(args),
+  });
+  return res.json();
+}

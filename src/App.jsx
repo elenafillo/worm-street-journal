@@ -1,91 +1,25 @@
 import { useState, useEffect, useRef } from "react";
 
-// ============================================================
-// CONFIG — paste your Supabase credentials here
-// ============================================================
-const SUPABASE_URL = "https://bliocisgoedlybzlfytk.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJsaW9jaXNnb2VkbHliemxmeXRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg3MTQ5MzUsImV4cCI6MjA5NDI5MDkzNX0.u3BZQrm6lWSPPd4gvyZOK9koOispIhYLnjqevtj5fCA";
-const DISPLAY_STYLE = "modern"; // "classic" | "modern"
-const PARTY_THURSDAY = "2026-11-26"; // ISO date of the party's Thursday — update each event
-const BREAKING_DURATION_MS = 5 * 60 * 1000; // how long the breaking banner stays live
-
-// ============================================================
-// Supabase client
-// ============================================================
-function getHeaders() {
-  return {
-    apikey: SUPABASE_ANON_KEY,
-    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-    "Content-Type": "application/json",
-  };
-}
-
-const supabase = {
-  async query(table, options = {}) {
-    let url = `${SUPABASE_URL}/rest/v1/${table}`;
-    const params = new URLSearchParams();
-    if (options.select) params.append("select", options.select);
-    if (options.order) params.append("order", options.order);
-    if (params.toString()) url += `?${params}`;
-    const res = await fetch(url, { headers: getHeaders() });
-    return res.json();
-  },
-  async insert(table, data) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
-      method: "POST",
-      headers: { ...getHeaders(), Prefer: "return=representation" },
-      body: JSON.stringify(data),
-    });
-    return res.json();
-  },
-  async update(table, data, eq) {
-    let url = `${SUPABASE_URL}/rest/v1/${table}`;
-    const params = new URLSearchParams();
-    Object.entries(eq).forEach(([k, v]) => params.append(k, `eq.${v}`));
-    url += `?${params}`;
-    const res = await fetch(url, {
-      method: "PATCH",
-      headers: { ...getHeaders(), Prefer: "return=representation" },
-      body: JSON.stringify(data),
-    });
-    return res.json();
-  },
-  async delete(table, eq) {
-    let url = `${SUPABASE_URL}/rest/v1/${table}`;
-    const params = new URLSearchParams();
-    Object.entries(eq).forEach(([k, v]) => params.append(k, `eq.${v}`));
-    url += `?${params}`;
-    await fetch(url, { method: "DELETE", headers: getHeaders() });
-  },
-  async uploadImage(file) {
-    const ext = file.name.split(".").pop();
-    const filename = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-    const res = await fetch(
-      `${SUPABASE_URL}/storage/v1/object/wsj-images/${filename}`,
-      {
-        method: "POST",
-        headers: {
-          apikey: SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-          "Content-Type": file.type,
-        },
-        body: file,
-      }
-    );
-    if (!res.ok) throw new Error("Upload failed");
-    return `${SUPABASE_URL}/storage/v1/object/public/wsj-images/${filename}`;
-  },
-  subscribe(table, callback) {
-    const interval = setInterval(callback, 4000);
-    return () => clearInterval(interval);
-  },
-};
+import { supabase } from "./lib/supabase.js";
+import { DISPLAY_STYLE, PARTY_THURSDAY } from "./lib/config.js";
+import { useBreaking } from "./lib/useBreaking.js";
+import { useArticles } from "./lib/useArticles.js";
+import WexTrade from "./wex/WexTrade.jsx";
+import WexAdmin from "./wex/WexAdmin.jsx";
+import { storedCode, wex } from "./wex/wexApi.js";
+import WexDash from "./wex/WexDash.jsx";
+import { wexStyles } from "./wex/wexStyles.js";
+import { dashStyles } from "./wex/dashStyles.js";
+import TickerDash from "./wex/TickerDash.jsx";
+import { tickerStyles } from "./wex/tickerStyles.js";
+import PhotoCropper, { cropperStyles } from "./PhotoCropper.jsx";
+import { clampRatio, needsCrop, readPhoto, renderPhoto } from "./lib/photo.js";
 
 // ============================================================
 // Styles
 // ============================================================
 const styles = `
-  @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;900&family=Inter:wght@400;500;700&family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400;1,700&family=UnifrakturMaguntia&family=IM+Fell+English:ital@0;1&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;900&family=Inter:wght@400;500;700&family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400;1,700&family=UnifrakturMaguntia&family=IM+Fell+English:ital@0;1&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=VT323&display=swap');
 
   @font-face {
     font-family: 'Rojal';
@@ -216,11 +150,15 @@ const styles = `
   .article-inner.img-right { flex-direction: row-reverse; }
   .article-inner.no-img { flex-direction: column; }
 
+  /* Photo slots are square and show the whole photo: uploads are cropped to
+     between 4:5 and 5:4, and whatever is left over becomes paper-coloured
+     bands rather than being cut off. Same rule on every screen. */
   .article-image {
-    width: 220px;
-    min-width: 220px;
+    width: 160px;
+    min-width: 160px;
     height: 160px;
-    object-fit: cover;
+    object-fit: contain;
+    background: var(--paper-dark);
     border: 1px solid var(--paper-darker);
     flex-shrink: 0;
   }
@@ -410,6 +348,42 @@ const styles = `
     margin-top: 16px;
   }
 
+  /* Who is filing: the note under the byline, and the gate above the button. */
+  .form-note {
+    font-family: 'IM Fell English', serif;
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+  .form-note b { color: var(--ink); }
+
+  .form-login-note {
+    background: var(--paper-dark);
+    border-left: 4px solid var(--ink);
+    padding: 14px 16px;
+    font-family: 'IM Fell English', serif;
+    font-size: 14px;
+    line-height: 1.5;
+    margin-bottom: 12px;
+  }
+  .form-login-note a { color: var(--ink); font-weight: bold; }
+
+  .form-check {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    font-family: 'IM Fell English', serif;
+    font-size: 15px;
+    margin-bottom: 12px;
+    cursor: pointer;
+  }
+  .form-check input {
+    width: 18px; height: 18px; margin-top: 2px;
+    flex-shrink: 0; accent-color: var(--ink);
+  }
+  .form-check small { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+
   .char-count {
     font-family: 'IM Fell English', serif;
     font-size: 11px;
@@ -447,6 +421,10 @@ const styles = `
     opacity: 0.5;
     border-left-color: var(--muted);
   }
+
+  /* Waiting for the Fed. Not faded like a hidden story: it needs a decision. */
+  .gm-article.held-article { border-left-color: var(--red); }
+  .gm-tag-held { color: var(--red); }
 
   .gm-article-headline {
     font-family: 'Playfair Display', serif;
@@ -740,7 +718,10 @@ const styles = `
   }
 
   [data-style="modern"] .success-msg,
-  [data-style="modern"] .error-msg {
+  [data-style="modern"] .error-msg,
+  [data-style="modern"] .form-note,
+  [data-style="modern"] .form-login-note,
+  [data-style="modern"] .form-check {
     font-family: 'Inter', Arial, sans-serif;
   }
 
@@ -824,10 +805,13 @@ const styles = `
     align-items: flex-start;
   }
 
+  /* Fixed sizes, because the page is a fixed 1200x960 canvas. 240 + 150 is
+     what leaves room for a three-line headline and all three stories below. */
   .broadsheet-hero-image {
-    width: 34%;
+    width: 240px;
     aspect-ratio: 1 / 1;
-    object-fit: cover;
+    object-fit: contain;
+    background: var(--paper-dark);
     border: 1px solid var(--paper-darker);
     flex-shrink: 0;
   }
@@ -866,9 +850,10 @@ const styles = `
   }
 
   .broadsheet-secondary-image {
-    width: 75%;
+    width: 150px;
     aspect-ratio: 1 / 1;
-    object-fit: cover;
+    object-fit: contain;
+    background: var(--paper-dark);
     border: 1px solid var(--paper-darker);
     margin-bottom: 8px;
     flex-shrink: 0;
@@ -1082,9 +1067,11 @@ const styles = `
 
     .broadsheet-hero-layout { flex-direction: column; }
 
+    /* A touch wider than square, so the photo isn't a whole screen tall;
+       square and portrait photos get bands at the sides. */
     .broadsheet-hero-image {
       width: 100%;
-      aspect-ratio: 16 / 9;
+      aspect-ratio: 5 / 4;
     }
 
     .broadsheet-hero-body { font-size: 15px; }
@@ -1171,25 +1158,29 @@ function getPartyDays() {
 // ============================================================
 const TICKER_SEPARATOR = "     "; // em spaces between repetitions
 
-function Ticker({ message }) {
+// `messages` is every live banner, newest first. They share one strip rather
+// than queueing, so a second headline never waits for the first to expire.
+function Ticker({ messages }) {
   const measureRef = useRef();
   const [measured, setMeasured] = useState({ segW: 0, reps: 6 });
+
+  // One segment: for each message, big spaces + emoji + BREAKING: + message + emoji
+  const segment = messages
+    .map(m => TICKER_SEPARATOR + "⚡ BREAKING: " + m + " ⚡")
+    .join("");
 
   useEffect(() => {
     if (!measureRef.current) return;
     const segW = measureRef.current.offsetWidth;
     const reps = Math.max(6, Math.ceil((3 * window.innerWidth) / segW));
     setMeasured({ segW, reps });
-  }, [message]);
+  }, [segment]);
 
   const { segW, reps } = measured;
   const tickerStyle = segW > 0 ? {
     "--ticker-offset": `-${segW}px`,
     "--ticker-duration": `${segW / 120}s`,
   } : {};
-
-  // Each repeated segment: big spaces + emoji + BREAKING: + message + emoji
-  const segment = TICKER_SEPARATOR + "⚡ BREAKING: " + message + " ⚡";
 
   return (
     <div className="breaking-banner">
@@ -1210,59 +1201,11 @@ function Ticker({ message }) {
 // Display Screen
 // ============================================================
 function DisplayScreen() {
-  const [articles, setArticles] = useState([]);
-  const [breaking, setBreaking] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const breakingEventIdRef = useRef(null);
-  const breakingTimerRef = useRef(null);
+  const { articles: all, loaded } = useArticles();
+  const loading = !loaded;
+  const { live: breaking } = useBreaking();
 
-  async function fetchArticles() {
-    const data = await supabase.query("articles", {
-      select: "*",
-      order: "created_at.desc",
-    });
-    if (Array.isArray(data)) {
-      setArticles(data.filter(a => !a.hidden && (!a.article_type || a.article_type === "article")));
-    }
-    setLoading(false);
-  }
-
-  async function checkEvents() {
-    const data = await supabase.query("events", {
-      select: "*",
-      order: "created_at.desc",
-    });
-    if (Array.isArray(data) && data.length > 0) {
-      const latest = data[0];
-      if (latest.type === "breaking_news") {
-        if (latest.id !== breakingEventIdRef.current) {
-          breakingEventIdRef.current = latest.id;
-          if (breakingTimerRef.current) clearTimeout(breakingTimerRef.current);
-          setBreaking(latest.payload?.message || "BREAKING NEWS");
-          breakingTimerRef.current = setTimeout(() => {
-            setBreaking(null);
-            breakingEventIdRef.current = null;
-          }, BREAKING_DURATION_MS);
-        }
-      } else if (latest.type === "clear_breaking") {
-        if (breakingTimerRef.current) clearTimeout(breakingTimerRef.current);
-        breakingTimerRef.current = null;
-        breakingEventIdRef.current = null;
-        setBreaking(null);
-      }
-    }
-  }
-
-  useEffect(() => {
-    fetchArticles();
-    const unsub1 = supabase.subscribe("articles", fetchArticles);
-    const unsub2 = supabase.subscribe("events", checkEvents);
-    return () => {
-      unsub1();
-      unsub2();
-      if (breakingTimerRef.current) clearTimeout(breakingTimerRef.current);
-    };
-  }, []);
+  const articles = all.filter(a => !a.hidden && (!a.article_type || a.article_type === "article"));
 
   const today = new Date().toLocaleDateString("en-GB", {
     weekday: "long", day: "numeric", month: "long", year: "numeric",
@@ -1281,7 +1224,7 @@ function DisplayScreen() {
         <hr className="masthead-rule" />
       </div>
 
-      {breaking && <Ticker message={breaking} />}
+      {breaking.length > 0 && <Ticker messages={breaking.map(b => b.message)} />}
 
       <div className="articles-grid">
         {loading && (
@@ -1333,58 +1276,12 @@ function BroadsheetScreen() {
   const mode = params.get("mode") || "recent";
   const speed = Math.max(5, parseInt(params.get("speed") || "15", 10));
 
-  const [articles, setArticles] = useState([]);
-  const [breaking, setBreaking] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const { articles: all, loaded } = useArticles();
+  const loading = !loaded;
   const [headlineIdx, setHeadlineIdx] = useState(0);
-  const breakingEventIdRef = useRef(null);
-  const breakingTimerRef = useRef(null);
+  const { live: breaking } = useBreaking();
 
-  async function fetchArticles() {
-    const data = await supabase.query("articles", {
-      select: "*",
-      order: "created_at.desc",
-    });
-    if (Array.isArray(data)) setArticles(data.filter(a => !a.hidden));
-    setLoading(false);
-  }
-
-  async function checkEvents() {
-    const data = await supabase.query("events", {
-      select: "*",
-      order: "created_at.desc",
-    });
-    if (Array.isArray(data) && data.length > 0) {
-      const latest = data[0];
-      if (latest.type === "breaking_news") {
-        if (latest.id !== breakingEventIdRef.current) {
-          breakingEventIdRef.current = latest.id;
-          if (breakingTimerRef.current) clearTimeout(breakingTimerRef.current);
-          setBreaking(latest.payload?.message || "BREAKING NEWS");
-          breakingTimerRef.current = setTimeout(() => {
-            setBreaking(null);
-            breakingEventIdRef.current = null;
-          }, BREAKING_DURATION_MS);
-        }
-      } else if (latest.type === "clear_breaking") {
-        if (breakingTimerRef.current) clearTimeout(breakingTimerRef.current);
-        breakingTimerRef.current = null;
-        breakingEventIdRef.current = null;
-        setBreaking(null);
-      }
-    }
-  }
-
-  useEffect(() => {
-    fetchArticles();
-    const unsub1 = supabase.subscribe("articles", fetchArticles);
-    const unsub2 = supabase.subscribe("events", checkEvents);
-    return () => {
-      unsub1();
-      unsub2();
-      if (breakingTimerRef.current) clearTimeout(breakingTimerRef.current);
-    };
-  }, []);
+  const articles = all.filter(a => !a.hidden);
 
   const visibleArticles = articles.filter(a => !a.article_type || a.article_type === "article");
 
@@ -1392,7 +1289,13 @@ function BroadsheetScreen() {
     .filter(a => a.article_type === "notice")
     .slice(0, 4);
 
-  const now = Date.now();
+  // What's-on items drop off an hour after they start. Their own clock: the
+  // articles no longer re-render the page every poll, only when news changes.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
   const events = articles
     .filter(a => a.article_type === "entertainment" && a.scheduled_at)
     .filter(a => now < new Date(a.scheduled_at).getTime() + 60 * 60 * 1000)
@@ -1446,7 +1349,7 @@ function BroadsheetScreen() {
           <hr className="masthead-rule" />
         </div>
 
-        {breaking && <Ticker message={breaking} />}
+        {breaking.length > 0 && <Ticker messages={breaking.map(b => b.message)} />}
 
         <div className="broadsheet-body">
           <div className="broadsheet-main">
@@ -1530,17 +1433,56 @@ function BroadsheetScreen() {
 function SubmitForm() {
   const [isNoticeMode, setIsNoticeMode] = useState(false);
   const [form, setForm] = useState({ author_name: "", headline: "", body: "" });
+  // `photo` is what they picked, decoded; `imageFile` is what gets uploaded —
+  // cropped and shrunk (lib/photo.js). Kept apart so "Adjust crop" can go
+  // back to the full original.
+  const [photo, setPhoto] = useState(null);         // { file, bitmap, width, height, url }
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
+  const [cropping, setCropping] = useState(false);
+  const [processing, setProcessing] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [selectedDay, setSelectedDay] = useState(null); // index 0–3
   const [selectedTime, setSelectedTime] = useState("");
-  const [submissionCode, setSubmissionCode] = useState("");
+  const [held, setHeld] = useState(false);     // "Wait for approval"
+  const [press, setPress] = useState(false);   // "Press release" (CEOs only)
   const [submitting, setSubmitting] = useState(false);
-  const [success, setSuccess] = useState(false);
+  const [success, setSuccess] = useState("");  // the confirmation to show, or ""
   const [error, setError] = useState("");
   const fileRef = useRef();
   const partyDays = getPartyDays();
+
+  // Who is filing. A WEX login is the gate for every story (it replaced the
+  // shared submission code), and the same check says whether they run a
+  // company. undefined = still checking, null = not logged in.
+  const [who, setWho] = useState(undefined);
+
+  // Checked on arrival and whenever the page regains focus, so a guest who
+  // logs in on TRADE in another tab can come straight back and file.
+  useEffect(() => {
+    let cancelled = false;
+    async function check() {
+      const code = storedCode();
+      if (!code) { if (!cancelled) setWho(null); return; }
+      try {
+        const { status, data } = await wex("login", { code });
+        if (cancelled) return;
+        setWho(status === 200 && data.player
+          ? { code, name: data.player.display_name, ceo_of: data.ceo_of || null }
+          : null);
+      } catch {
+        // Flaky party wifi: keep whatever we knew rather than locking them out.
+        if (!cancelled) setWho(w => (w === undefined ? null : w));
+      }
+    }
+    check();
+    window.addEventListener("focus", check);
+    return () => { cancelled = true; window.removeEventListener("focus", check); };
+  }, []);
+
+  // Notices and events never move markets, so neither option applies to them.
+  const isPress = press && Boolean(who?.ceo_of) && !isNoticeMode;
+  const isHeld = isPress || (held && !isNoticeMode);
 
   const headlineMax = isNoticeMode ? 40 : 120;
   const bodyMax = isNoticeMode ? 160 : 600;
@@ -1549,8 +1491,7 @@ function SubmitForm() {
     setIsNoticeMode(noticeMode);
     setSelectedDay(null);
     setSelectedTime("");
-    setImageFile(null);
-    setImagePreview(null);
+    clearPhoto();
     setError("");
     setForm(f => ({
       ...f,
@@ -1563,12 +1504,68 @@ function SubmitForm() {
     setForm(f => ({ ...f, [e.target.name]: e.target.value }));
   }
 
-  function handleImageFile(file) {
-    if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { setError("Image must be under 5MB."); return; }
+  function setUpload(file) {
+    if (imagePreview) URL.revokeObjectURL(imagePreview);
+    setImagePreview(file ? URL.createObjectURL(file) : null);
     setImageFile(file);
-    setImagePreview(URL.createObjectURL(file));
+  }
+
+  function clearPhoto() {
+    if (photo) { URL.revokeObjectURL(photo.url); photo.bitmap.close?.(); }
+    setPhoto(null);
+    setUpload(null);
+    setCropping(false);
+  }
+
+  async function applyCrop(source, rect) {
+    setCropping(false);
+    setProcessing(true);
+    try {
+      setUpload(await renderPhoto(source.bitmap, rect, source.file.name));
+    } catch (err) {
+      console.error(err);
+      setError("That photo couldn't be processed. Try another one.");
+      clearPhoto();
+    }
+    setProcessing(false);
+  }
+
+  // Inside 4:5–5:4 it is just shrunk; outside, the crop box opens and the
+  // upload is made when they tap "Use photo".
+  async function handleImageFile(file) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { setError("That file isn't an image."); return; }
+    if (file.size > 25 * 1024 * 1024) { setError("Image must be under 25MB."); return; }
     setError("");
+    clearPhoto();
+    // A GIF would lose its animation on a canvas, so it goes up as it is and
+    // the square slots' bands take care of its shape.
+    if (file.type === "image/gif") {
+      if (file.size > 5 * 1024 * 1024) { setError("GIFs must be under 5MB."); return; }
+      setUpload(file);
+      return;
+    }
+    setProcessing(true);
+    let source;
+    try {
+      const { bitmap, width, height } = await readPhoto(file);
+      source = { file, bitmap, width, height, url: URL.createObjectURL(file) };
+    } catch {
+      setProcessing(false);
+      setError("That photo couldn't be read. Try a JPEG or PNG.");
+      return;
+    }
+    setPhoto(source);
+    setProcessing(false);
+    if (needsCrop(source.width, source.height)) setCropping(true);
+    else await applyCrop(source, null);
+  }
+
+  function cancelCrop() {
+    // Backing out of the first crop means no photo; backing out of an
+    // adjustment keeps the one they already had.
+    if (imageFile) setCropping(false);
+    else clearPhoto();
   }
 
   function handleDrop(e) {
@@ -1591,8 +1588,8 @@ function SubmitForm() {
         return;
       }
     }
-    if (!submissionCode.trim()) {
-      setError("Please enter the submission code.");
+    if (!who) {
+      setError("Log in to WEX first — tap TRADE, then come back.");
       return;
     }
     setSubmitting(true);
@@ -1621,7 +1618,7 @@ function SubmitForm() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          submission_code: submissionCode,
+          code: who.code,
           author_name: form.author_name,
           headline: form.headline,
           body: form.body,
@@ -1629,20 +1626,30 @@ function SubmitForm() {
           article_type,
           scheduled_at,
           can_be_headline: article_type === "article",
+          held: isHeld,
+          press: isPress,
         }),
       });
       const result = await res.json();
 
       if (!res.ok) {
+        // Their code stopped working (regenerated, or the account was
+        // unclaimed) — grey the button out again until they log back in.
+        if (result.needs_login) setWho(null);
         setError(result.error || "Something went wrong. Please try again.");
       } else if (Array.isArray(result) && result[0]?.id) {
-        setSuccess(true);
+        setSuccess(
+          isHeld ? "✓ Filed. Your story is with the Fed and runs when they approve it."
+          : isNoticeMode ? "✓ Your notice has been posted to the board."
+          : "✓ Your dispatch has been filed. It will appear on the wall momentarily."
+        );
         setForm(f => ({ ...f, headline: "", body: "" }));
-        setImageFile(null);
-        setImagePreview(null);
+        clearPhoto();
         setSelectedDay(null);
         setSelectedTime("");
-        setTimeout(() => setSuccess(false), 5000);
+        setHeld(false);
+        setPress(false);
+        setTimeout(() => setSuccess(""), 5000);
       } else {
         setError("Something went wrong. Please try again.");
         console.error("Submit result:", result);
@@ -1686,6 +1693,12 @@ function SubmitForm() {
           placeholder="e.g. Reginald Earthworm III"
           maxLength={60}
         />
+        {who && (
+          <div className="form-note">
+            Note that the Fed will be able to see your name <b>{who.name}</b> when
+            you file a story. Only your byline gets printed.
+          </div>
+        )}
       </div>
 
       <div className="form-group">
@@ -1741,21 +1754,34 @@ function SubmitForm() {
 
       {!isNoticeMode && (
         <div className="form-group">
-          <label className="form-label">Image (Optional · Max 5MB)</label>
+          <label className="form-label">Image (Optional)</label>
           <div
             className={`image-upload-area ${dragOver ? "drag-over" : ""}`}
             onDragOver={e => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
             onDrop={handleDrop}
-            onClick={() => fileRef.current?.click()}
+            onClick={() => { if (!processing) fileRef.current?.click(); }}
           >
-            {imagePreview ? (
+            {processing ? (
+              <label className="image-upload-label"><span className="spinner" />Preparing your photograph…</label>
+            ) : imagePreview ? (
               <>
                 <img className="image-preview" src={imagePreview} alt="Preview" />
                 <br />
+                {photo && (
+                  <button
+                    type="button"
+                    className="image-remove"
+                    style={{ marginRight: "16px" }}
+                    onClick={e => { e.stopPropagation(); setCropping(true); }}
+                  >
+                    Adjust crop
+                  </button>
+                )}
                 <button
+                  type="button"
                   className="image-remove"
-                  onClick={e => { e.stopPropagation(); setImageFile(null); setImagePreview(null); }}
+                  onClick={e => { e.stopPropagation(); clearPhoto(); }}
                 >
                   Remove image
                 </button>
@@ -1770,38 +1796,64 @@ function SubmitForm() {
               type="file"
               accept="image/*"
               style={{ display: "none" }}
-              onChange={e => handleImageFile(e.target.files[0])}
+              onChange={e => { handleImageFile(e.target.files[0]); e.target.value = ""; }}
             />
           </div>
+          {cropping && photo && (
+            <PhotoCropper
+              src={photo.url}
+              initialAspect={clampRatio(photo.width / photo.height)}
+              onCancel={cancelCrop}
+              onDone={rect => applyCrop(photo, rect)}
+            />
+          )}
         </div>
       )}
 
-      <div className="form-group">
-        <label className="form-label">Submission Code</label>
-        <input
-          className="form-input"
-          type="text"
-          value={submissionCode}
-          onChange={e => setSubmissionCode(e.target.value)}
-          placeholder="Enter the code to file your story"
-        />
-      </div>
+      {who && !isNoticeMode && (
+        <div className="form-group">
+          {who.ceo_of && (
+            <label className="form-check">
+              <input type="checkbox" checked={press} onChange={e => setPress(e.target.checked)} />
+              <span>
+                Press release for {who.ceo_of.ticker}
+                <small>An official statement from {who.ceo_of.name}. Always waits for the Fed&apos;s approval.</small>
+              </span>
+            </label>
+          )}
+          <label className="form-check">
+            <input
+              type="checkbox"
+              checked={isHeld}
+              disabled={isPress}
+              onChange={e => setHeld(e.target.checked)}
+            />
+            <span>
+              Wait for approval
+              <small>Not published straight away. The Fed reads it first, and may move the market with it.</small>
+            </span>
+          </label>
+        </div>
+      )}
+
+      {who === null && (
+        <div className="form-login-note">
+          You need to be logged in to WEX to file a story. <a href="#trade">Log in on TRADE</a> with
+          the words on your card, then come back here.
+        </div>
+      )}
 
       {error && <div className="error-msg">{error}</div>}
 
-      <button className="submit-btn" onClick={handleSubmit} disabled={submitting}>
+      <button className="submit-btn" onClick={handleSubmit} disabled={submitting || !who || processing || cropping}>
         {submitting
           ? <><span className="spinner" />Filing...</>
+          : who === undefined ? "Checking your papers…"
+          : isPress ? "File the Press Release"
           : isNoticeMode ? "Post to Noticeboard" : "File to the Journal"}
       </button>
 
-      {success && (
-        <div className="success-msg">
-          {isNoticeMode
-            ? "✓ Your notice has been posted to the board."
-            : "✓ Your dispatch has been filed. It will appear on the wall momentarily."}
-        </div>
-      )}
+      {success && <div className="success-msg">{success}</div>}
     </div>
   );
 }
@@ -1812,28 +1864,16 @@ function SubmitForm() {
 function GMPanel() {
   const [authed, setAuthed] = useState(false);
   const [pw, setPw] = useState("");
+  // Which half of the control room you are standing in. Kept as a hard split
+  // rather than one row of tabs: moderating an article and crashing the
+  // economy should never be one mis-tap apart.
+  const [desk, setDesk] = useState("wsj");
   const [articles, setArticles] = useState([]);
   const [breakingMsg, setBreakingMsg] = useState("");
-  const [activeBreaking, setActiveBreaking] = useState(null);
-  const [breakingExpiresAt, setBreakingExpiresAt] = useState(null);
-  const [countdown, setCountdown] = useState(null);
-
-  async function fetchBreaking() {
-    const data = await supabase.query("events", { select: "*", order: "created_at.desc" });
-    if (Array.isArray(data) && data.length > 0) {
-      const latest = data[0];
-      if (latest.type === "breaking_news") {
-        const expiresAt = new Date(latest.created_at).getTime() + BREAKING_DURATION_MS;
-        if (Date.now() < expiresAt) {
-          setActiveBreaking(latest.payload?.message || "BREAKING NEWS");
-          setBreakingExpiresAt(expiresAt);
-          return;
-        }
-      }
-    }
-    setActiveBreaking(null);
-    setBreakingExpiresAt(null);
-  }
+  // The same rule as the wall screens, so LIVE here means live there too,
+  // including banners fired from the Exchange desk.
+  const { live: liveBreaking, refresh: refreshBreaking } = useBreaking();
+  const [now, setNow] = useState(Date.now);
 
   async function gmAction(action, params = {}) {
     const res = await fetch("/api/gm", {
@@ -1863,7 +1903,6 @@ function GMPanel() {
     const data = await res.json();
     if (Array.isArray(data)) setArticles(data);
     setAuthed(true);
-    fetchBreaking();
   }
 
   async function toggleHide(article) {
@@ -1888,27 +1927,22 @@ function GMPanel() {
     const msg = breakingMsg.trim();
     await gmAction("trigger_breaking", { message: msg });
     setBreakingMsg("");
-    setActiveBreaking(msg);
-    setBreakingExpiresAt(Date.now() + BREAKING_DURATION_MS);
+    refreshBreaking();
   }
 
   async function clearBreaking() {
     await gmAction("clear_breaking");
-    setActiveBreaking(null);
-    setBreakingExpiresAt(null);
+    refreshBreaking();
   }
 
+  // Ticks the countdowns. Polls only fetch every 4s, so a banner is dropped
+  // here the moment it expires rather than up to one poll later.
   useEffect(() => {
-    if (!breakingExpiresAt) { setCountdown(null); return; }
-    function tick() {
-      const remaining = Math.max(0, Math.ceil((breakingExpiresAt - Date.now()) / 1000));
-      setCountdown(remaining);
-      if (remaining === 0) { setActiveBreaking(null); setBreakingExpiresAt(null); }
-    }
-    tick();
-    const id = setInterval(tick, 1000);
+    if (!liveBreaking.length) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [breakingExpiresAt]);
+  }, [liveBreaking.length]);
+  const liveNow = liveBreaking.filter(b => b.expiresAt > now);
 
   if (!authed) {
     return (
@@ -1935,6 +1969,25 @@ function GMPanel() {
     <div className="gm-root">
       <div className="gm-header">&#9881; Worm Fed Control Room</div>
 
+      <div className="gm-desk-switch">
+        <button
+          className={`gm-desk-btn ${desk === "wsj" ? "active" : ""}`}
+          onClick={() => setDesk("wsj")}
+        >
+          <span className="gm-desk-name">WSJ</span>
+          <span className="gm-desk-sub">The Newsroom</span>
+        </button>
+        <button
+          className={`gm-desk-btn ${desk === "wex" ? "active" : ""}`}
+          onClick={() => setDesk("wex")}
+        >
+          <span className="gm-desk-name">WEX</span>
+          <span className="gm-desk-sub">The Exchange</span>
+        </button>
+      </div>
+
+      {desk === "wex" ? <WexAdmin password={pw} /> : <>
+
       <div className="gm-section-title">Breaking News</div>
       <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
         <input
@@ -1954,36 +2007,42 @@ function GMPanel() {
         </button>
       </div>
       <button className="gm-btn hide" onClick={clearBreaking} style={{ marginBottom: "8px" }}>
-        Clear breaking banner
+        {liveNow.length > 1 ? "Clear all breaking banners" : "Clear breaking banner"}
       </button>
       <div style={{
         marginBottom: "16px",
         padding: "8px 12px",
-        background: activeBreaking ? "var(--red)" : "var(--paper-dark)",
-        color: activeBreaking ? "var(--paper)" : "var(--muted)",
+        background: liveNow.length ? "var(--red)" : "var(--paper-dark)",
+        color: liveNow.length ? "var(--paper)" : "var(--muted)",
         fontFamily: "'IM Fell English', serif",
         fontSize: "13px",
-        borderLeft: `4px solid ${activeBreaking ? "var(--red)" : "var(--paper-darker)"}`,
+        borderLeft: `4px solid ${liveNow.length ? "var(--red)" : "var(--paper-darker)"}`,
       }}>
-        {activeBreaking ? (
-          <>
-            <strong>LIVE:</strong> {activeBreaking}
-            {countdown !== null && (
+        {liveNow.length ? liveNow.map(b => {
+          const secs = Math.max(0, Math.ceil((b.expiresAt - now) / 1000));
+          return (
+            <div key={b.id}>
+              <strong>LIVE:</strong> {b.message}
               <span style={{ opacity: 0.8, marginLeft: "12px" }}>
-                — clears in {Math.floor(countdown / 60)}:{String(countdown % 60).padStart(2, "0")}
+                — clears in {Math.floor(secs / 60)}:{String(secs % 60).padStart(2, "0")}
               </span>
-            )}
-          </>
-        ) : "No active breaking banner."}
+            </div>
+          );
+        }) : "No active breaking banner."}
       </div>
 
       <div className="gm-section-title">All Articles ({articles.length})</div>
       {articles.map(a => (
-        <div key={a.id} className={`gm-article ${a.hidden ? "hidden-article" : ""}`}>
+        <div key={a.id} className={`gm-article ${a.held ? "held-article" : a.hidden ? "hidden-article" : ""}`}>
           <div className="gm-article-headline">{a.headline}</div>
           <div className="gm-article-meta">
-            By {a.author_name} · {formatDate(a.created_at)} {formatTime(a.created_at)}
-            {a.hidden && " · HIDDEN"}
+            By {a.author_name}
+            {a.filed_by && <>, filed by <b>{a.filed_by}</b></>}
+            {" · "}{formatDate(a.created_at)} {formatTime(a.created_at)}
+            {a.held
+              ? <b className="gm-tag-held"> · HELD — awaiting approval</b>
+              : a.hidden && " · HIDDEN"}
+            {a.press_ticker && <b> · PRESS RELEASE · {a.press_ticker}</b>}
             {a.article_type === "notice" && " · NOTICE"}
             {a.article_type === "entertainment" && ` · EVENT${a.scheduled_at ? " " + formatEventTime(a.scheduled_at) : ""}`}
           </div>
@@ -1991,7 +2050,7 @@ function GMPanel() {
             {a.body.slice(0, 120)}{a.body.length > 120 ? "…" : ""}
           </div>
           <button className={`gm-btn ${a.hidden ? "show" : "hide"}`} onClick={() => toggleHide(a)}>
-            {a.hidden ? "Show" : "Hide"}
+            {a.held ? "Publish, no move" : a.hidden ? "Show" : "Hide"}
           </button>
           {(!a.article_type || a.article_type === "article") && (
             <button
@@ -2011,6 +2070,8 @@ function GMPanel() {
           No articles yet.
         </div>
       )}
+
+      </>}
     </div>
   );
 }
@@ -2018,15 +2079,29 @@ function GMPanel() {
 // ============================================================
 // Root App with simple routing
 // ============================================================
+const ROUTES = ["broadsheet", "display", "submit", "gm", "trade", "wex", "ticker"];
+
+// Wall screens that fill the viewport and draw no nav bar of their own.
+const BARE_ROUTES = ["ticker"];
+const DEFAULT_ROUTE = "broadsheet";
+
+// Strip the leading "#" and anything from "?" onward, so a hash carrying query
+// params (#broadsheet?mode=random) still resolves to its route. Matching the
+// whole hash exactly used to send every parameterised link to the default.
+function routeFromHash() {
+  const name = window.location.hash.replace(/^#/, "").split("?")[0];
+  return ROUTES.includes(name) ? name : DEFAULT_ROUTE;
+}
+
 export default function App() {
-  const [route, setRoute] = useState(() => {
-    const h = window.location.hash;
-    if (h === "#submit") return "submit";
-    if (h === "#gm") return "gm";
-    if (h === "#broadsheet") return "broadsheet";
-    if (h === "#display") return "display";
-    return "broadsheet";
-  });
+  const [route, setRoute] = useState(routeFromHash);
+
+  // Without this, browser back/forward changed the URL but not the screen.
+  useEffect(() => {
+    function onHashChange() { setRoute(routeFromHash()); }
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
 
   function navigate(r) {
     window.location.hash = r;
@@ -2035,21 +2110,35 @@ export default function App() {
 
   return (
     <div data-style={DISPLAY_STYLE}>
-      <style>{styles}</style>
-      <div className="nav">
-        <span className="nav-brand">WSJ</span>
+      <style>{styles}{wexStyles}{dashStyles}{tickerStyles}{cropperStyles}</style>
+      {/* Five short labels, still one phone line without wrapping — roughly
+          290px of text and gaps inside a 320px viewport. The old standalone
+          "WSJ" brand is gone; it is now the broadsheet link itself.
+          WEX is the public market dashboard on the wall, TRADE is the guest's
+          own phone screen. WEX used to point at TRADE, which was always a
+          slight lie. */}
+      {!BARE_ROUTES.includes(route) && <div className="nav">
         <span className={`nav-link ${route === "broadsheet" ? "active" : ""}`} onClick={() => navigate("broadsheet")}>
-          Broadsheet
+          WSJ
+        </span>
+        <span className={`nav-link ${route === "wex" ? "active" : ""}`} onClick={() => navigate("wex")}>
+          WEX
+        </span>
+        <span className={`nav-link ${route === "trade" ? "active" : ""}`} onClick={() => navigate("trade")}>
+          TRADE
         </span>
         <span className={`nav-link ${route === "submit" ? "active" : ""}`} onClick={() => navigate("submit")}>
-          File a Story
+          FILE
         </span>
         <span className={`nav-link ${route === "gm" ? "active" : ""}`} onClick={() => navigate("gm")}>
-          Worm Fed
+          FED
         </span>
-      </div>
+      </div>}
       {route === "display" && <DisplayScreen />}
+      {route === "ticker" && <TickerDash />}
       {route === "broadsheet" && <BroadsheetScreen />}
+      {route === "wex" && <WexDash />}
+      {route === "trade" && <WexTrade />}
       {route === "submit" && <SubmitForm />}
       {route === "gm" && <GMPanel />}
     </div>
