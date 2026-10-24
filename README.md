@@ -6,10 +6,10 @@ exchange, the **Worm Stock Exchange** (WEX). Guests trade and file stories from
 their phones. The GM (the "Worm Fed") moderates stories, fires market events and
 breaking news, and controls the weather.
 
-**Live:** https://worm-street-journal.vercel.app
+**Now Live:** https://wormstreetjournal.co.uk
 
 
-**Dev version (most up to date):** https://worm-street-journal-git-wex-elena-fillo-s-projects.vercel.app/
+**Dev version:** https://worm-street-journal-git-wex-elena-fillo-s-projects.vercel.app/
 
 **Stack:** React 19 + Vite · Supabase (Postgres, Storage, pg_cron, pg_net) · Vercel serverless functions in `api/`
 
